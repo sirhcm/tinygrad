@@ -1,9 +1,21 @@
 # pylint: disable-all
 
 from fcntl import ioctl
-import mmap
-import os
+# import mmap
+import os, time
 import ctypes, struct
+from tinygrad.helpers import getenv
+
+libc = ctypes.CDLL(None)
+mmap64 = libc.mmap64
+mmap64.restype = ctypes.c_void_p
+mmap64.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long]
+
+MAP_SHARED = 0x1
+MAP_FIXED = 0x10
+
+PROT_READ = 0x1
+PROT_WRITE = 0x2
 
 # IOCTLS:
 UVM_INITIALIZE = 0x30000001
@@ -37,6 +49,17 @@ NV2080_CTRL_CMD_GPU_GET_GID_INFO = 0x2080014a
 NVA06C_CTRL_CMD_GPFIFO_SCHEDULE = 0xa06c0101
 NV2080_CTRL_CMD_GR_GET_SM_ISSUE_RATE_MODIFIER = 0x20801230
 
+# PUSHBUFS
+NVC6C0_SET_SHADER_SHARED_MEMORY_WINDOW_A = 0x02a0
+NVC6C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A = 0x02e4
+
+NVC6C0_OFFSET_OUT_UPPER = 0x0188
+NVC6C0_LINE_LENGTH_IN = 0x0180
+NVC6C0_LAUNCH_DMA = 0x01b0
+NVC6C0_LOAD_INLINE_DATA = 0x01b4
+
+NVC6C0_SET_INLINE_QMD_ADDRESS_A = 0x0318
+
 def hexdump(bytes: bytearray) -> None:
   for i, byte in enumerate(bytes):
     if i % 0x10 == 0: print(f"\n{i:06X}\t", end="")
@@ -61,7 +84,7 @@ class TcContext():
     struct.pack_into("3I8xQ12xIi", p := bytearray(52), 0, self.root, self.subdevice, memory, length, flags, fd_dev0)
     ret = ioctl(self.fd_ctl, ioc_wr(NV_ESC_RM_MAP_MEMORY, 56), p)
     assert ret == 0 and struct.unpack_from("I", p, 40)[0] == 0, "mmap failed"
-    return mmap.mmap(fd_dev0, length, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE) # MAP_FIXED?
+    return mmap64(target, length, PROT_READ | PROT_WRITE, MAP_SHARED | (MAP_FIXED if target else 0), fd_dev0, 0)
   
   def rm_control(self, cmd, client, object, params, paramsize):
     # NVOS54_PARAMETERS
@@ -74,9 +97,9 @@ class TcContext():
     struct.pack_into("3I26xI4x2I28xQ", p := bytearray(184), 0, self.root, self.device, 2, self.root, type, flags, length)
     ret = ioctl(self.fd_ctl, ioc_wr(NV_ESC_RM_VID_HEAP_CONTROL, 184), p)
     assert struct.unpack_from("I", p, 18)[0] == 0, "rm heap control"
-    mem = struct.unpack_from("I", p, 44)[0]
+    mem = struct.unpack_from("I", p, 44)[0] # data.AllocSize.hMemory
     local_ptr = self.mmap_object(mem, length, addr, mmap_flags)
-    # assert local_ptr == addr, "mmap heap"
+    assert local_ptr == addr, "mmap heap"
 
     if type == 0:
       # UVM_CREATE_EXTERNAL_RANGE_PARAMS
@@ -96,7 +119,6 @@ class TcContext():
     self.init_uvm()
     self.init_mem()
     self.init_fifo()
-    print("init done")
     
   def init_dev(self):
     self.fd_ctl = os.open("/dev/nvidiactl", os.O_RDWR | os.O_CLOEXEC)
@@ -114,6 +136,7 @@ class TcContext():
     self.usermode = self.alloc_object(TURING_USERMODE_A, self.root, self.subdevice)
 
     self.gpu_mmio_ptr = self.mmap_object(self.usermode, 0x10000, None, 2)
+    self.gpu_mmio_ptr = ctypes.cast(self.gpu_mmio_ptr, ctypes.POINTER(ctypes.c_uint32 * (0x10000 // 4)))
 
     # NV_VASPACE_ALLOCATION_PARAMETERS
     struct.pack_into("4xI28xQ", vap := bytearray(48), 0, 0x48, 0x1000)
@@ -141,6 +164,7 @@ class TcContext():
 
   def init_mem(self):
     self.mem_handle = self.heap_alloc(0x200400000, 0x200000, 0x0001c101, 0xc0000, 0) # 0 = TYPE_IMAGE (nvos.h)
+    print(f"memhandle: {self.mem_handle:x}")
     self.mem_error_handle = self.heap_alloc(self.mem_error, 0x1000, 0xc001, 0, 13) # 13 = TYPE_NOTIFIER
 
   def init_fifo(self):
@@ -177,5 +201,130 @@ class TcContext():
     imla0, fmla16, dp, fmla32, ffma, imla1, imla2, imla3, imla4 = struct.unpack_from("9B", p, 16)
     print(f"rate modifiers -- imla0:{imla0} fmla16:{fmla16} dp:{dp} fmla32:{fmla32} ffma:{ffma} imla1:{imla1} imla2:{imla2} imla3:{imla3} imla4:{imla4}")
 
+def clear_gpu_control(): ctypes.memset(0x200400000, 0, 0x200600000-0x200400000)
+  
+trivial = bytearray.fromhex("00005a00ff057624 000fe200078e00ff"  # IMAD.MOV.U32 R5, RZ, RZ, c[0x0][0x168]
+                            "0000580000027a02 000fe20000000f00"  # MOV R2, c[0x0][0x160]
+                            "0000590000037a02 000fca0000000f00"  # MOV R3, c[0x0][0x164]
+                            "0000000502007986 000fe2000c101904"  # STG.E [R2.64], R5
+                            "000000000000794d 000fea0003800000") # EXIT
+
+class PushBuf():
+  def __init__(self):
+    self.gpu_base = 0x200500000
+    self.cmdq = self.gpu_base + 0x6000
+    self.cur = self.cmdq
+
+  def NVC0_FIFO_PKHDR_SQ(self, subc, mthd, size): return 0x20000000 | (size << 16) | (subc << 13) | (mthd >> 2)
+  def NVC0_FIFO_PKHDR_1I(self, subc, mthd, size): return 0xa0000000 | (size << 16) | (subc << 13) | (mthd >> 2)
+  def BEGIN_NVC0(self, subc, mthd, size): self.PUSH_DATA(self.NVC0_FIFO_PKHDR_SQ(subc, mthd, size))
+  def BEGIN_NIC0(self, subc, mthd, size): self.PUSH_DATA(self.NVC0_FIFO_PKHDR_1I(subc, mthd, size))
+
+  def PUSH_DATA(self, data):
+    ctypes.cast(ctypes.c_void_p(self.cur), ctypes.POINTER(ctypes.c_uint32)).contents = ctypes.c_uint32(data)
+    self.cur += 1
+  def PUSH_DATAh(self, data):
+    ctypes.cast(ctypes.c_void_p(self.cur), ctypes.POINTER(ctypes.c_uint32)).contents = ctypes.c_uint32(data >> 32)
+    self.cur += 1
+  def PUSH_DATAl(self, data):
+    ctypes.cast(ctypes.c_void_p(self.cur), ctypes.POINTER(ctypes.c_uint32)).contents = ctypes.c_uint32(data >> 0)
+    self.cur += 1
+  def PUSH_DATAhl(self, data):
+    self.PUSH_DATAh(data)
+    self.PUSH_DATAl(data)
+
+  def gpu_setup(self):
+    self.BEGIN_NVC0(1, NVC6C0_SET_SHADER_SHARED_MEMORY_WINDOW_A, 2)
+    self.PUSH_DATAhl(0x00007FFFF4000000)
+
+    self.BEGIN_NVC0(1, NVC6C0_SET_SHADER_LOCAL_MEMORY_NON_THROTTLED_A, 2)
+    self.PUSH_DATAhl(0x004B0000)
+  
+  def gpu_memcpy(self, dest, data, length):
+    assert length % 4 == 0
+
+    self.BEGIN_NVC0(1, NVC6C0_OFFSET_OUT_UPPER, 2)
+    self.PUSH_DATAhl(dest)
+
+    self.BEGIN_NVC0(1, NVC6C0_LINE_LENGTH_IN, 2)
+    self.PUSH_DATA(length)
+    self.PUSH_DATA(1) # NVC6C0_LINE_COUNT
+    self.BEGIN_NVC0(1, NVC6C0_LAUNCH_DMA, 1)
+    
+    self.PUSH_DATA(0x41)
+
+    words = length // 4
+    self.BEGIN_NIC0(1, NVC6C0_LOAD_INLINE_DATA, words)
+    for i in range(words): self.PUSH_DATA(data[i])
+
+  def gpu_compute(self, qmd, program_address, constant_address, constant_length):
+    self.BEGIN_NVC0(1, NVC6C0_SET_INLINE_QMD_ADDRESS_A, 2)
+    self.PUSH_DATAhl(qmd >> 8)
+
+    # TODO: can't actually hardcode this...
+    data = bytearray.fromhex("00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+                             "7F 00 00 00 00 00 00 3C 00 00 00 00 00 00 00 00"
+                             "10 50 00 02 00 00 00 00 00 00 00 00 00 00 01 44"
+                             "01 00 00 00 01 00 00 00 01 00 00 00 00 00 00 00")
+    self.BEGIN_NVC0(1, 0x0320, 0x40) # NVC6C0_LOAD_INLINE_QMD_DATA(0)
+    for i in range(0x40): self.PUSH_DATA(data[i])
+
+def kick(doorbell, cb_index):
+  print(f"doorbell=0x{doorbell:x}")
+  db = ctypes.cast(doorbell, ctypes.POINTER(ctypes.c_uint32))
+  print(db)
+  db[0] = ctypes.c_uint32(cb_index)
+
 if __name__ == "__main__":
   ctx = TcContext()
+  print("**************** INIT DONE ****************")
+  clear_gpu_control()
+
+  push = PushBuf()
+
+  push.gpu_setup()
+  
+  push.gpu_memcpy(push.gpu_base + 4, b"\xaa\xbb\xcc\xdd", 4)
+
+  program = trivial
+
+  # why is this 0x10? and not 0x0b?
+  struct.pack_into("QI", args := bytearray(0x10), 0, push.gpu_base, 0x1337) # addr, value
+
+  # load program and args
+  # NOTE: normal memcpy also works here
+  push.gpu_memcpy(push.gpu_base+0x1000, program, min(len(program), 0x180))
+  push.gpu_memcpy(push.gpu_base+0x2160, args, 0x10)
+  print(f"memcpyed program into gpu memory @ 0x{push.gpu_base:x}")
+  
+  push.gpu_compute(push.gpu_base + 0x4000, push.gpu_base + 0x1000, push.gpu_base + 0x2000, 0x160 + len(args))
+
+  # skipping dma_copy for now...
+
+  size = push.cur - push.cmdq
+  # *((uint64_t*)0x200400000) = cmdq | (sz << 40) | 0x20000000000;
+  # *((uint64_t*)0x20040208c) = 1;
+  ctypes.cast(ctypes.c_void_p(0x200400000), ctypes.POINTER(ctypes.c_uint64))[0] = ctypes.c_uint64(push.cmdq | (size << 40) | 0x20000000000)
+  ctypes.cast(ctypes.c_void_p(0x20040208c), ctypes.POINTER(ctypes.c_uint64))[0] = ctypes.c_uint64(1)
+
+  # print(f"loc: 0x{ctx.gpu_mmio_ptr+0x90:x}")
+  # print(f"work token: 0x{ctx.work_submit_token:x}")
+  # print(f"0x{ctx.gpu_mmio_ptr:x}:")
+  # test = bytearray(ctypes.cast(ctx.gpu_mmio_ptr, ctypes.POINTER(ctypes.c_byte * 0x1000)).contents)
+  # print(len(test))
+  # hexdump(test)
+  print(type(ctx.gpu_mmio_ptr[0][0x90 // 4]))
+  # mmio = bytearray(ctx.gpu_mmio_ptr[0])
+  # print(mmio)
+  # hexdump(mmio)
+  ctx.gpu_mmio_ptr[0][0x90 // 4] = ctypes.c_uint32(ctx.work_submit_token)
+  # kick(ctx.gpu_mmio_ptr + 0x90, ctx.work_submit_token)
+
+  done = ctypes.cast(ctypes.c_void_p(0x200402088), ctypes.POINTER(ctypes.c_uint32))
+  print(f"ran to queue {done.contents}")
+  cnt = 0
+  while not done.contents and cnt < 1000:
+    time.sleep(0.001)
+    cnt += 1
+  time.sleep(0.01)
+  print(f"ran to queue {done.contents}")
