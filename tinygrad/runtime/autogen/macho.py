@@ -125,6 +125,36 @@ if ctypes.sizeof(ctypes.c_longdouble) == 8:
 else:
     c_long_double_t = ctypes.c_ubyte*8
 
+def string_cast(char_pointer, encoding='utf-8', errors='strict'):
+    value = ctypes.cast(char_pointer, ctypes.c_char_p).value
+    if value is not None and encoding is not None:
+        value = value.decode(encoding, errors=errors)
+    return value
+
+
+def char_pointer_cast(string, encoding='utf-8'):
+    if encoding is not None:
+        try:
+            string = string.encode(encoding)
+        except AttributeError:
+            # In Python3, bytes has no encode attribute
+            pass
+    string = ctypes.c_char_p(string)
+    return ctypes.cast(string, ctypes.POINTER(ctypes.c_char))
+
+
+
+class FunctionFactoryStub:
+    def __getattr__(self, _):
+      return ctypes.CFUNCTYPE(lambda y:y)
+
+# libraries['FIXME_STUB'] explanation
+# As you did not list (-l libraryname.so) a library that exports this function
+# This is a non-working stub instead.
+# You can either re-run clan2py with -l /path/to/library.so
+# Or manually fix this by comment the ctypes.CDLL loading
+_libraries = {}
+_libraries['FIXME_STUB'] = FunctionFactoryStub() #  ctypes.CDLL('FIXME_STUB')
 
 
 _MACHO_LOADER_H_ = True # macro
@@ -982,6 +1012,139 @@ struct_fileset_entry_command._fields_ = [
     ('reserved', ctypes.c_uint32),
 ]
 
+_MACHO_RELOC_H_ = True # macro
+R_ABS = 0 # macro
+R_SCATTERED = 0x80000000 # macro
+class struct_relocation_info(Structure):
+    pass
+
+struct_relocation_info._pack_ = 1 # source:False
+struct_relocation_info._fields_ = [
+    ('r_address', ctypes.c_int32),
+    ('r_symbolnum', ctypes.c_uint32, 24),
+    ('r_pcrel', ctypes.c_uint32, 1),
+    ('r_length', ctypes.c_uint32, 2),
+    ('r_extern', ctypes.c_uint32, 1),
+    ('r_type', ctypes.c_uint32, 4),
+]
+
+class struct_scattered_relocation_info(Structure):
+    pass
+
+struct_scattered_relocation_info._pack_ = 1 # source:False
+struct_scattered_relocation_info._fields_ = [
+    ('r_address', ctypes.c_uint32, 24),
+    ('r_type', ctypes.c_uint32, 4),
+    ('r_length', ctypes.c_uint32, 2),
+    ('r_pcrel', ctypes.c_uint32, 1),
+    ('r_scattered', ctypes.c_uint32, 1),
+    ('r_value', ctypes.c_int32),
+]
+
+
+# values for enumeration 'reloc_type_generic'
+reloc_type_generic__enumvalues = {
+    0: 'GENERIC_RELOC_VANILLA',
+    1: 'GENERIC_RELOC_PAIR',
+    2: 'GENERIC_RELOC_SECTDIFF',
+    3: 'GENERIC_RELOC_PB_LA_PTR',
+    4: 'GENERIC_RELOC_LOCAL_SECTDIFF',
+    5: 'GENERIC_RELOC_TLV',
+}
+GENERIC_RELOC_VANILLA = 0
+GENERIC_RELOC_PAIR = 1
+GENERIC_RELOC_SECTDIFF = 2
+GENERIC_RELOC_PB_LA_PTR = 3
+GENERIC_RELOC_LOCAL_SECTDIFF = 4
+GENERIC_RELOC_TLV = 5
+reloc_type_generic = ctypes.c_uint32 # enum
+_MACHO_NLIST_H_ = True # macro
+N_STAB = 0xe0 # macro
+N_PEXT = 0x10 # macro
+N_TYPE = 0x0e # macro
+N_EXT = 0x01 # macro
+N_UNDF = 0x0 # macro
+N_ABS = 0x2 # macro
+N_SECT = 0xe # macro
+N_PBUD = 0xc # macro
+N_INDR = 0xa # macro
+NO_SECT = 0 # macro
+MAX_SECT = 255 # macro
+def GET_COMM_ALIGN(n_desc):  # macro
+   return (((n_desc)>>8)&0x0f)
+def SET_COMM_ALIGN(n_desc, align):  # macro
+   pass
+REFERENCE_TYPE = 0x7 # macro
+REFERENCE_FLAG_UNDEFINED_NON_LAZY = 0 # macro
+REFERENCE_FLAG_UNDEFINED_LAZY = 1 # macro
+REFERENCE_FLAG_DEFINED = 2 # macro
+REFERENCE_FLAG_PRIVATE_DEFINED = 3 # macro
+REFERENCE_FLAG_PRIVATE_UNDEFINED_NON_LAZY = 4 # macro
+REFERENCE_FLAG_PRIVATE_UNDEFINED_LAZY = 5 # macro
+REFERENCED_DYNAMICALLY = 0x0010 # macro
+def GET_LIBRARY_ORDINAL(n_desc):  # macro
+   return (((n_desc)>>8)&0xff)
+def SET_LIBRARY_ORDINAL(n_desc, ordinal):  # macro
+   pass
+SELF_LIBRARY_ORDINAL = 0x0 # macro
+MAX_LIBRARY_ORDINAL = 0xfd # macro
+DYNAMIC_LOOKUP_ORDINAL = 0xfe # macro
+EXECUTABLE_ORDINAL = 0xff # macro
+N_NO_DEAD_STRIP = 0x0020 # macro
+N_DESC_DISCARDED = 0x0020 # macro
+N_WEAK_REF = 0x0040 # macro
+N_WEAK_DEF = 0x0080 # macro
+N_REF_TO_WEAK = 0x0080 # macro
+N_ARM_THUMB_DEF = 0x0008 # macro
+N_SYMBOL_RESOLVER = 0x0100 # macro
+N_ALT_ENTRY = 0x0200 # macro
+N_COLD_FUNC = 0x0400 # macro
+class struct_nlist(Structure):
+    pass
+
+class union_union_nlist_h_77(Union):
+    pass
+
+union_union_nlist_h_77._pack_ = 1 # source:False
+union_union_nlist_h_77._fields_ = [
+    ('n_strx', ctypes.c_uint32),
+]
+
+struct_nlist._pack_ = 1 # source:False
+struct_nlist._fields_ = [
+    ('n_un', union_union_nlist_h_77),
+    ('n_type', ctypes.c_ubyte),
+    ('n_sect', ctypes.c_ubyte),
+    ('n_desc', ctypes.c_int16),
+    ('n_value', ctypes.c_uint32),
+]
+
+class struct_nlist_64(Structure):
+    pass
+
+class union_union_nlist_h_93(Union):
+    pass
+
+union_union_nlist_h_93._pack_ = 1 # source:False
+union_union_nlist_h_93._fields_ = [
+    ('n_strx', ctypes.c_uint32),
+]
+
+struct_nlist_64._pack_ = 1 # source:False
+struct_nlist_64._fields_ = [
+    ('n_un', union_union_nlist_h_93),
+    ('n_type', ctypes.c_ubyte),
+    ('n_sect', ctypes.c_ubyte),
+    ('n_desc', ctypes.c_uint16),
+    ('n_value', ctypes.c_uint64),
+]
+
+try:
+    nlist = _libraries['FIXME_STUB'].nlist
+    nlist.restype = ctypes.c_int32
+    nlist.argtypes = [ctypes.POINTER(ctypes.c_char), ctypes.POINTER(struct_nlist)]
+except AttributeError:
+    pass
 __all__ = \
     ['BIND_IMMEDIATE_MASK', 'BIND_OPCODE_ADD_ADDR_ULEB',
     'BIND_OPCODE_DONE', 'BIND_OPCODE_DO_BIND',
@@ -1004,21 +1167,26 @@ __all__ = \
     'BIND_TYPE_TEXT_ABSOLUTE32', 'BIND_TYPE_TEXT_PCREL32',
     'DICE_KIND_ABS_JUMP_TABLE32', 'DICE_KIND_DATA',
     'DICE_KIND_JUMP_TABLE16', 'DICE_KIND_JUMP_TABLE32',
-    'DICE_KIND_JUMP_TABLE8', 'EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE',
+    'DICE_KIND_JUMP_TABLE8', 'DYNAMIC_LOOKUP_ORDINAL',
+    'EXECUTABLE_ORDINAL', 'EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE',
     'EXPORT_SYMBOL_FLAGS_KIND_MASK',
     'EXPORT_SYMBOL_FLAGS_KIND_REGULAR',
     'EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL',
     'EXPORT_SYMBOL_FLAGS_REEXPORT',
     'EXPORT_SYMBOL_FLAGS_STATIC_RESOLVER',
     'EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER',
-    'EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION', 'INDIRECT_SYMBOL_ABS',
-    'INDIRECT_SYMBOL_LOCAL', 'LC_ATOM_INFO', 'LC_BUILD_VERSION',
-    'LC_CODE_SIGNATURE', 'LC_DATA_IN_CODE', 'LC_DYLD_CHAINED_FIXUPS',
-    'LC_DYLD_ENVIRONMENT', 'LC_DYLD_EXPORTS_TRIE', 'LC_DYLD_INFO',
-    'LC_DYLD_INFO_ONLY', 'LC_DYLIB_CODE_SIGN_DRS', 'LC_DYSYMTAB',
-    'LC_ENCRYPTION_INFO', 'LC_ENCRYPTION_INFO_64', 'LC_FILESET_ENTRY',
-    'LC_FUNCTION_STARTS', 'LC_FVMFILE', 'LC_IDENT', 'LC_IDFVMLIB',
-    'LC_ID_DYLIB', 'LC_ID_DYLINKER', 'LC_LAZY_LOAD_DYLIB',
+    'EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION',
+    'GENERIC_RELOC_LOCAL_SECTDIFF', 'GENERIC_RELOC_PAIR',
+    'GENERIC_RELOC_PB_LA_PTR', 'GENERIC_RELOC_SECTDIFF',
+    'GENERIC_RELOC_TLV', 'GENERIC_RELOC_VANILLA',
+    'INDIRECT_SYMBOL_ABS', 'INDIRECT_SYMBOL_LOCAL', 'LC_ATOM_INFO',
+    'LC_BUILD_VERSION', 'LC_CODE_SIGNATURE', 'LC_DATA_IN_CODE',
+    'LC_DYLD_CHAINED_FIXUPS', 'LC_DYLD_ENVIRONMENT',
+    'LC_DYLD_EXPORTS_TRIE', 'LC_DYLD_INFO', 'LC_DYLD_INFO_ONLY',
+    'LC_DYLIB_CODE_SIGN_DRS', 'LC_DYSYMTAB', 'LC_ENCRYPTION_INFO',
+    'LC_ENCRYPTION_INFO_64', 'LC_FILESET_ENTRY', 'LC_FUNCTION_STARTS',
+    'LC_FVMFILE', 'LC_IDENT', 'LC_IDFVMLIB', 'LC_ID_DYLIB',
+    'LC_ID_DYLINKER', 'LC_LAZY_LOAD_DYLIB',
     'LC_LINKER_OPTIMIZATION_HINT', 'LC_LINKER_OPTION',
     'LC_LOADFVMLIB', 'LC_LOAD_DYLIB', 'LC_LOAD_DYLINKER',
     'LC_LOAD_UPWARD_DYLIB', 'LC_LOAD_WEAK_DYLIB', 'LC_MAIN',
@@ -1030,27 +1198,32 @@ __all__ = \
     'LC_SYMSEG', 'LC_SYMTAB', 'LC_THREAD', 'LC_TWOLEVEL_HINTS',
     'LC_UNIXTHREAD', 'LC_UUID', 'LC_VERSION_MIN_IPHONEOS',
     'LC_VERSION_MIN_MACOSX', 'LC_VERSION_MIN_TVOS',
-    'LC_VERSION_MIN_WATCHOS', 'MH_ALLMODSBOUND',
-    'MH_ALLOW_STACK_EXECUTION', 'MH_APP_EXTENSION_SAFE',
-    'MH_BINDATLOAD', 'MH_BINDS_TO_WEAK', 'MH_BUNDLE', 'MH_CANONICAL',
-    'MH_CIGAM', 'MH_CIGAM_64', 'MH_CORE', 'MH_DEAD_STRIPPABLE_DYLIB',
-    'MH_DSYM', 'MH_DYLDLINK', 'MH_DYLIB', 'MH_DYLIB_IN_CACHE',
-    'MH_DYLIB_STUB', 'MH_DYLINKER', 'MH_EXECUTE', 'MH_FILESET',
-    'MH_FORCE_FLAT', 'MH_FVMLIB', 'MH_GPU_DYLIB', 'MH_GPU_EXECUTE',
-    'MH_HAS_TLV_DESCRIPTORS', 'MH_INCRLINK', 'MH_KEXT_BUNDLE',
-    'MH_LAZY_INIT', 'MH_MAGIC', 'MH_MAGIC_64',
+    'LC_VERSION_MIN_WATCHOS', 'MAX_LIBRARY_ORDINAL', 'MAX_SECT',
+    'MH_ALLMODSBOUND', 'MH_ALLOW_STACK_EXECUTION',
+    'MH_APP_EXTENSION_SAFE', 'MH_BINDATLOAD', 'MH_BINDS_TO_WEAK',
+    'MH_BUNDLE', 'MH_CANONICAL', 'MH_CIGAM', 'MH_CIGAM_64', 'MH_CORE',
+    'MH_DEAD_STRIPPABLE_DYLIB', 'MH_DSYM', 'MH_DYLDLINK', 'MH_DYLIB',
+    'MH_DYLIB_IN_CACHE', 'MH_DYLIB_STUB', 'MH_DYLINKER', 'MH_EXECUTE',
+    'MH_FILESET', 'MH_FORCE_FLAT', 'MH_FVMLIB', 'MH_GPU_DYLIB',
+    'MH_GPU_EXECUTE', 'MH_HAS_TLV_DESCRIPTORS', 'MH_INCRLINK',
+    'MH_KEXT_BUNDLE', 'MH_LAZY_INIT', 'MH_MAGIC', 'MH_MAGIC_64',
     'MH_NLIST_OUTOFSYNC_WITH_DYLDINFO', 'MH_NOFIXPREBINDING',
     'MH_NOMULTIDEFS', 'MH_NOUNDEFS', 'MH_NO_HEAP_EXECUTION',
     'MH_NO_REEXPORTED_DYLIBS', 'MH_OBJECT', 'MH_PIE',
     'MH_PREBINDABLE', 'MH_PREBOUND', 'MH_PRELOAD', 'MH_ROOT_SAFE',
     'MH_SETUID_SAFE', 'MH_SIM_SUPPORT', 'MH_SPLIT_SEGS',
     'MH_SUBSECTIONS_VIA_SYMBOLS', 'MH_TWOLEVEL', 'MH_WEAK_DEFINES',
-    'PLATFORM_ANY', 'PLATFORM_BRIDGEOS', 'PLATFORM_DRIVERKIT',
-    'PLATFORM_FIRMWARE', 'PLATFORM_IOS', 'PLATFORM_IOSSIMULATOR',
-    'PLATFORM_MACCATALYST', 'PLATFORM_MACOS', 'PLATFORM_SEPOS',
-    'PLATFORM_TVOS', 'PLATFORM_TVOSSIMULATOR', 'PLATFORM_UNKNOWN',
-    'PLATFORM_WATCHOS', 'PLATFORM_WATCHOSSIMULATOR',
-    'REBASE_IMMEDIATE_MASK', 'REBASE_OPCODE_ADD_ADDR_IMM_SCALED',
+    'NO_SECT', 'N_ABS', 'N_ALT_ENTRY', 'N_ARM_THUMB_DEF',
+    'N_COLD_FUNC', 'N_DESC_DISCARDED', 'N_EXT', 'N_INDR',
+    'N_NO_DEAD_STRIP', 'N_PBUD', 'N_PEXT', 'N_REF_TO_WEAK', 'N_SECT',
+    'N_STAB', 'N_SYMBOL_RESOLVER', 'N_TYPE', 'N_UNDF', 'N_WEAK_DEF',
+    'N_WEAK_REF', 'PLATFORM_ANY', 'PLATFORM_BRIDGEOS',
+    'PLATFORM_DRIVERKIT', 'PLATFORM_FIRMWARE', 'PLATFORM_IOS',
+    'PLATFORM_IOSSIMULATOR', 'PLATFORM_MACCATALYST', 'PLATFORM_MACOS',
+    'PLATFORM_SEPOS', 'PLATFORM_TVOS', 'PLATFORM_TVOSSIMULATOR',
+    'PLATFORM_UNKNOWN', 'PLATFORM_WATCHOS',
+    'PLATFORM_WATCHOSSIMULATOR', 'REBASE_IMMEDIATE_MASK',
+    'REBASE_OPCODE_ADD_ADDR_IMM_SCALED',
     'REBASE_OPCODE_ADD_ADDR_ULEB', 'REBASE_OPCODE_DONE',
     'REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB',
     'REBASE_OPCODE_DO_REBASE_IMM_TIMES',
@@ -1059,35 +1232,43 @@ __all__ = \
     'REBASE_OPCODE_MASK', 'REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB',
     'REBASE_OPCODE_SET_TYPE_IMM', 'REBASE_TYPE_POINTER',
     'REBASE_TYPE_TEXT_ABSOLUTE32', 'REBASE_TYPE_TEXT_PCREL32',
-    'SECTION_ATTRIBUTES', 'SECTION_ATTRIBUTES_SYS',
+    'REFERENCED_DYNAMICALLY', 'REFERENCE_FLAG_DEFINED',
+    'REFERENCE_FLAG_PRIVATE_DEFINED',
+    'REFERENCE_FLAG_PRIVATE_UNDEFINED_LAZY',
+    'REFERENCE_FLAG_PRIVATE_UNDEFINED_NON_LAZY',
+    'REFERENCE_FLAG_UNDEFINED_LAZY',
+    'REFERENCE_FLAG_UNDEFINED_NON_LAZY', 'REFERENCE_TYPE', 'R_ABS',
+    'R_SCATTERED', 'SECTION_ATTRIBUTES', 'SECTION_ATTRIBUTES_SYS',
     'SECTION_ATTRIBUTES_USR', 'SECTION_TYPE', 'SECT_BSS',
     'SECT_COMMON', 'SECT_DATA', 'SECT_FVMLIB_INIT0',
     'SECT_FVMLIB_INIT1', 'SECT_ICON_HEADER', 'SECT_ICON_TIFF',
     'SECT_OBJC_MODULES', 'SECT_OBJC_REFS', 'SECT_OBJC_STRINGS',
     'SECT_OBJC_SYMBOLS', 'SECT_TEXT', 'SEG_DATA', 'SEG_ICON',
     'SEG_IMPORT', 'SEG_LINKEDIT', 'SEG_OBJC', 'SEG_PAGEZERO',
-    'SEG_TEXT', 'SEG_UNIXSTACK', 'SG_FVMLIB', 'SG_HIGHVM',
-    'SG_NORELOC', 'SG_PROTECTED_VERSION_1', 'SG_READ_ONLY',
-    'S_16BYTE_LITERALS', 'S_4BYTE_LITERALS', 'S_8BYTE_LITERALS',
-    'S_ATTR_DEBUG', 'S_ATTR_EXT_RELOC', 'S_ATTR_LIVE_SUPPORT',
-    'S_ATTR_LOC_RELOC', 'S_ATTR_NO_DEAD_STRIP', 'S_ATTR_NO_TOC',
-    'S_ATTR_PURE_INSTRUCTIONS', 'S_ATTR_SELF_MODIFYING_CODE',
-    'S_ATTR_SOME_INSTRUCTIONS', 'S_ATTR_STRIP_STATIC_SYMS',
-    'S_COALESCED', 'S_CSTRING_LITERALS', 'S_DTRACE_DOF',
-    'S_GB_ZEROFILL', 'S_INIT_FUNC_OFFSETS', 'S_INTERPOSING',
-    'S_LAZY_DYLIB_SYMBOL_POINTERS', 'S_LAZY_SYMBOL_POINTERS',
-    'S_LITERAL_POINTERS', 'S_MOD_INIT_FUNC_POINTERS',
-    'S_MOD_TERM_FUNC_POINTERS', 'S_NON_LAZY_SYMBOL_POINTERS',
-    'S_REGULAR', 'S_SYMBOL_STUBS',
+    'SEG_TEXT', 'SEG_UNIXSTACK', 'SELF_LIBRARY_ORDINAL', 'SG_FVMLIB',
+    'SG_HIGHVM', 'SG_NORELOC', 'SG_PROTECTED_VERSION_1',
+    'SG_READ_ONLY', 'S_16BYTE_LITERALS', 'S_4BYTE_LITERALS',
+    'S_8BYTE_LITERALS', 'S_ATTR_DEBUG', 'S_ATTR_EXT_RELOC',
+    'S_ATTR_LIVE_SUPPORT', 'S_ATTR_LOC_RELOC', 'S_ATTR_NO_DEAD_STRIP',
+    'S_ATTR_NO_TOC', 'S_ATTR_PURE_INSTRUCTIONS',
+    'S_ATTR_SELF_MODIFYING_CODE', 'S_ATTR_SOME_INSTRUCTIONS',
+    'S_ATTR_STRIP_STATIC_SYMS', 'S_COALESCED', 'S_CSTRING_LITERALS',
+    'S_DTRACE_DOF', 'S_GB_ZEROFILL', 'S_INIT_FUNC_OFFSETS',
+    'S_INTERPOSING', 'S_LAZY_DYLIB_SYMBOL_POINTERS',
+    'S_LAZY_SYMBOL_POINTERS', 'S_LITERAL_POINTERS',
+    'S_MOD_INIT_FUNC_POINTERS', 'S_MOD_TERM_FUNC_POINTERS',
+    'S_NON_LAZY_SYMBOL_POINTERS', 'S_REGULAR', 'S_SYMBOL_STUBS',
     'S_THREAD_LOCAL_INIT_FUNCTION_POINTERS', 'S_THREAD_LOCAL_REGULAR',
     'S_THREAD_LOCAL_VARIABLES', 'S_THREAD_LOCAL_VARIABLE_POINTERS',
     'S_THREAD_LOCAL_ZEROFILL', 'S_ZEROFILL', 'TOOL_AIRLLD',
     'TOOL_AIRNT', 'TOOL_AIRNT_PLUGIN', 'TOOL_AIRPACK', 'TOOL_CLANG',
     'TOOL_GPUARCHIVER', 'TOOL_LD', 'TOOL_LLD', 'TOOL_METAL',
     'TOOL_METAL_FRAMEWORK', 'TOOL_SWIFT', '_MACHO_LOADER_H_',
-    'struct_build_tool_version', 'struct_build_version_command',
-    'struct_data_in_code_entry', 'struct_dyld_info_command',
-    'struct_dylib', 'struct_dylib_command', 'struct_dylib_module',
+    '_MACHO_NLIST_H_', '_MACHO_RELOC_H_', 'nlist',
+    'reloc_type_generic', 'struct_build_tool_version',
+    'struct_build_version_command', 'struct_data_in_code_entry',
+    'struct_dyld_info_command', 'struct_dylib',
+    'struct_dylib_command', 'struct_dylib_module',
     'struct_dylib_module_64', 'struct_dylib_reference',
     'struct_dylib_table_of_contents', 'struct_dylinker_command',
     'struct_dysymtab_command', 'struct_encryption_info_command',
@@ -1096,15 +1277,18 @@ __all__ = \
     'struct_fvmlib', 'struct_fvmlib_command', 'struct_ident_command',
     'struct_linkedit_data_command', 'struct_linker_option_command',
     'struct_load_command', 'struct_mach_header',
-    'struct_mach_header_64', 'struct_note_command',
-    'struct_prebind_cksum_command', 'struct_prebound_dylib_command',
+    'struct_mach_header_64', 'struct_nlist', 'struct_nlist_64',
+    'struct_note_command', 'struct_prebind_cksum_command',
+    'struct_prebound_dylib_command', 'struct_relocation_info',
     'struct_routines_command', 'struct_routines_command_64',
-    'struct_rpath_command', 'struct_section', 'struct_section_64',
-    'struct_segment_command', 'struct_segment_command_64',
-    'struct_source_version_command', 'struct_sub_client_command',
-    'struct_sub_framework_command', 'struct_sub_library_command',
-    'struct_sub_umbrella_command', 'struct_symseg_command',
-    'struct_symtab_command', 'struct_thread_command',
-    'struct_tlv_descriptor', 'struct_twolevel_hint',
-    'struct_twolevel_hints_command', 'struct_uuid_command',
-    'struct_version_min_command', 'union_lc_str']
+    'struct_rpath_command', 'struct_scattered_relocation_info',
+    'struct_section', 'struct_section_64', 'struct_segment_command',
+    'struct_segment_command_64', 'struct_source_version_command',
+    'struct_sub_client_command', 'struct_sub_framework_command',
+    'struct_sub_library_command', 'struct_sub_umbrella_command',
+    'struct_symseg_command', 'struct_symtab_command',
+    'struct_thread_command', 'struct_tlv_descriptor',
+    'struct_twolevel_hint', 'struct_twolevel_hints_command',
+    'struct_uuid_command', 'struct_version_min_command',
+    'union_lc_str', 'union_union_nlist_h_77',
+    'union_union_nlist_h_93']

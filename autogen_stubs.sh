@@ -231,7 +231,11 @@ generate_macho() {
 
   clang2py -k cdefstum \
     $(xcrun -sdk / -show-sdk-path)/usr/include/mach-o/loader.h \
+    $(xcrun -sdk / -show-sdk-path)/usr/include/mach-o/reloc.h \
+    $(xcrun -sdk / -show-sdk-path)/usr/include/mach-o/nlist.h \
     -o $BASE/macho.py
+
+  sed -i '' -e "s/return .*=.*$/pass/g" $BASE/macho.py
 
   fixup $BASE/macho.py
   python3 -c "import tinygrad.runtime.autogen.macho"
@@ -243,7 +247,7 @@ generate_mac() {
     return
   fi
 
-  clang2py -k cdefstum \
+  clang2py \
     $(xcrun -sdk / -show-sdk-path)/usr/include/libkern/OSCacheControl.h \
     -s 'sys_icache_invalidate' \
     --clang-args="-I$(xcrun -sdk / -show-sdk-path)/usr/include" \
