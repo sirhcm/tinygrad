@@ -121,6 +121,7 @@ runs:
         echo 'Acquire::GzipIndexes "true";' | sudo tee /etc/apt/apt.conf.d/gzip
         echo 'Acquire::http::Pipeline-Depth "5";' | sudo tee -a /etc/apt/apt.conf.d/99parallel
         echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' | sudo tee -a /etc/apt/apt.conf.d/99keep-debs
+        echo 'path-exclude /usr/share/doc/*\npath-exclude /usr/share/man/*\npath-exclude /usr/share/info/*' | sudo tee /etc/dpkg/dpkg.cfg.d/01_nodoc
 
     - name: Add OpenCL Repo
       if: inputs.opencl == 'true' && runner.os == 'Linux'
