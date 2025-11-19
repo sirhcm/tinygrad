@@ -1,6 +1,6 @@
 import ctypes, subprocess, tempfile, unittest
 from tinygrad.helpers import WIN
-from tinygrad.runtime.support.c import Struct
+from tinygrad.runtime.support.c import Struct, CEnum
 
 class TestAutogen(unittest.TestCase):
   def test_packed_struct_sizeof(self):
@@ -18,6 +18,35 @@ class TestAutogen(unittest.TestCase):
     self.assertEqual(ctypes.sizeof(Foo), 12)
     self.assertEqual(ctypes.sizeof(Bar), 12)
     self.assertEqual(ctypes.sizeof(Baz), 8)
+
+  def test_enum_bitfields(self):
+  # /* offset      |    size */  type = struct shader_info {
+  # /*      0      |       8 */    const char *name;
+  # /*      8      |       8 */    const char *label;
+  # /*     16      |       1 */    _Bool internal;
+  # /*     17      |      32 */    blake3_hash source_blake3;
+  # /*     49: 0   |       4 */    gl_shader_stage stage : 8;
+  # /*     50: 0   |       4 */    gl_shader_stage prev_stage : 8;
+  # /*     51: 0   |       4 */    gl_shader_stage next_stage : 8;
+  # /*     52      |       1 */    _Bool prev_stage_has_xfb;
+    gl_shader_stage = CEnum(ctypes.c_uint32)
+    blake3_hash = ctypes.c_bool * 32
+    class struct_shader_info(Struct): pass
+    struct_shader_info._fields_ = [
+      ('name', ctypes.POINTER(ctypes.c_char)),
+      ('label', ctypes.POINTER(ctypes.c_char)),
+      ('internal', ctypes.c_bool),
+      ('source_blake3', blake3_hash),
+      ('stage', gl_shader_stage,8),
+      ('prev_stage', gl_shader_stage,8),
+      ('next_stage', gl_shader_stage,8),
+      ('prev_stage_has_xfb', ctypes.c_bool),
+      ('num_textures', ctypes.c_ubyte),
+      ('num_ubos', ctypes.c_ubyte),
+      ('num_abos', ctypes.c_ubyte),
+    ]
+    print(struct_shader_info.stage)
+    self.assertEqual(ctypes.sizeof(struct_shader_info), 52)
 
   @unittest.skipIf(WIN, "doesn't compile on windows")
   def test_packed_struct_interop(self):
