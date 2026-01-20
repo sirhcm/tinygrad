@@ -1,7 +1,7 @@
 from typing import Callable
 import math, functools
 from tinygrad.dtype import dtypes, DType, promo_lattice
-from tinygrad.device import is_dtype_supported
+from tinygrad.renderer import Renderer
 from tinygrad.helpers import polyN, DISABLE_FAST_IDIV
 from tinygrad.uop.ops import UOp, UPat, Ops, PatternMatcher
 
@@ -278,9 +278,10 @@ def magicgu(vmax:int, d:int) -> tuple[int,int]:
       return m, s
   assert False
 
-def fast_idiv(device: str, x: UOp, d: int, dont_cast=False) -> UOp|None:
+def fast_idiv(renderer: Renderer, x: UOp, d: int, dont_cast=False) -> UOp|None:
   # NOTE: disable for METAL due to compiler bug. keccak with -O0 works but not with optimization
-  if device.startswith("METAL"): return None
+  from tinygrad.renderer.cstyle import MetalRenderer
+  if isinstance(renderer, MetalRenderer): return None
   # If d is a power of two this is not valid for signed ints!
   is_unsigned = x.vmin>=0 or x.dtype in dtypes.uints
   assert d>0, "Sign should have been taken out of divisor"
@@ -290,10 +291,10 @@ def fast_idiv(device: str, x: UOp, d: int, dont_cast=False) -> UOp|None:
     return ((x*m) >> s) if is_unsigned else ((x*m) >> s) + (x<0).where(x.ufix(1), 0)
   # before we try casting to a larger dtype (slow), we see if there are powers of two in d we can shift to make x smaller
   if (largest_factor_of_two_in_d := (d & -d)) > 1:
-    if (ret:=fast_idiv(device, x//largest_factor_of_two_in_d, d//largest_factor_of_two_in_d, dont_cast=True)) is not None: return ret
+    if (ret:=fast_idiv(renderer, x//largest_factor_of_two_in_d, d//largest_factor_of_two_in_d, dont_cast=True)) is not None: return ret
   if dont_cast: return None
   # promo_lattice needs to return an unsigned type if the type is unsigned
-  if dtypes.is_int(next_dtype := promo_lattice[x.dtype.scalar()][-1]) and is_dtype_supported(next_dtype, device):
+  if dtypes.is_int(next_dtype := promo_lattice[x.dtype.scalar()][-1]) and renderer.is_dtype_supported(next_dtype):
     if m*vmin >= dtypes.min(next_dtype) and m*vmax <= dtypes.max(next_dtype):
       return ((x.cast(next_dtype)*m) >> s).cast(x.dtype) if is_unsigned else ((x.cast(next_dtype)*m) >> s).cast(x.dtype) + (x<0).where(x.ufix(1), 0)
   return None
