@@ -56,20 +56,23 @@ runs:
 
     # **** Caching packages ****
 
+    - name: Get pip cache dir
+      id: pip-cache
+      run: echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
     - name: Cache Python packages (PR)
       if: github.event_name == 'pull_request'
       id: restore-venv-pr
       uses: actions/cache/restore@v4
       with:
-        path: ${{ github.workspace }}/.venv
-        key: venv-${{ runner.os }}-python-${{ steps.setup-python.outputs.python-version }}-${{ inputs.deps }}-${{ inputs.pydeps }}-${{ env.CACHE_VERSION }}
+        path: ${{ steps.pip-cache.outputs.dir }}
+        key: pip-${{ runner.os }}-python-${{ steps.setup-python.outputs.python-version }}-${{ inputs.deps }}-${{ inputs.pydeps }}-${{ env.CACHE_VERSION }}
     - name: Cache Python packages
       if: github.event_name != 'pull_request'
       id: restore-venv
       uses: actions/cache@v4
       with:
-        path: ${{ github.workspace }}/.venv
-        key: venv-${{ runner.os }}-python-${{ steps.setup-python.outputs.python-version }}-${{ inputs.deps }}-${{ inputs.pydeps }}-${{ env.CACHE_VERSION }}
+        path: ${{ steps.pip-cache.outputs.dir }}
+        key: pip-${{ runner.os }}-python-${{ steps.setup-python.outputs.python-version }}-${{ inputs.deps }}-${{ inputs.pydeps }}-${{ env.CACHE_VERSION }}
 
     # **** Caching downloads ****
 
