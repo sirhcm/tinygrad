@@ -17,22 +17,23 @@ def _drop_valid_stmts(valid:UOp, idx:UOp, height:int, width:int) -> list[UOp]:
     if (res:=parse_valid(stmt)) is None: continue
     X, is_upper_bound, c = res
 
-    # for X0 + X1 + ... >= 1, check if it's out of bound when Xi = 0 for all i
-    if not is_upper_bound and c == 1 and all(u.op in GroupOp.Irreducible and u.vmin == 0 for u in X.split_uop(Ops.ADD)):
-      testidx = functools.reduce(lambda nowidx,u: nowidx.substitute({u:u.const_like(0)}), X.split_uop(Ops.ADD), idx)
-      if testidx.gep(0).vmax < 0 or testidx.gep(1).vmax < 0:
-        drop_stmt.append(stmt)
-        continue
-
-    # if X <= c, check if it's out of bound when X = c+1
-    # if X >= c, check if it's out of bound when X = c-1
-    test_value = c + 1 if is_upper_bound else c - 1
-    for i,b in zip(idx.src, (width, height)):
-      if i.is_increasing():
-        rw = i.substitute({X:X.const_like(test_value)})
-        if rw.vmin >= b or rw.vmax < 0:
+    # for X0 + X1 + ... >= 1, check if it's out of bound when all leaf vars of X are at their min (making X=0)
+    if not is_upper_bound and c == 1 and all(u.vmin == 0 for u in X.split_uop(Ops.ADD)):
+      testidx = functools.reduce(lambda nowidx,u: nowidx.substitute({u:u.const_like(u.vmin)}),
+                                 [u for u in X.toposort() if u.op in GroupOp.Irreducible], idx)
+      for ti, b in zip(testidx.src, (width, height)):
+        if ti.vmin >= b or ti.vmax < 0:
           drop_stmt.append(stmt)
           break
+      continue
+
+    # general case: create a fake variable spanning the invalid range, then check if idx goes out of bounds
+    fake = UOp.variable("__invalid", c + 1, X.vmax, X.dtype) if is_upper_bound else UOp.variable("__invalid", X.vmin, c - 1, X.dtype)
+    testidx = idx.substitute({X: fake})
+    for ti, b in zip(testidx.src, (width, height)):
+      if ti.vmin >= b or ti.vmax < 0:
+        drop_stmt.append(stmt)
+        break
   return drop_stmt
 
 def simplify_valid_load(buf:UOp, start_idx:UOp, valid:UOp) -> UOp|None:
