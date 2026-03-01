@@ -40,6 +40,14 @@ add_tags = PatternMatcher([
   (UPat(GroupOp.All, name="x"), lambda ctx,x: tag_uop(ctx,x) if x in ctx.bases else None),
 ])
 
+def move_enlarging_cast(cast:UOp, contig:UOp):
+  return None if cast.src[0].dtype.itemsize >= cast.dtype.itemsize else contig.replace(dtype=cast.src[0].dtype, src=(cast.src[0],)).cast(cast.dtype)
+
+pm_move_contiguous_cast = PatternMatcher([
+  # cast to larger dtype should happen after CONTIGUOUS
+  (UPat(Ops.CAST, name="cast").f(Ops.CONTIGUOUS, name="contig"), move_enlarging_cast),
+])
+
 def replace_contig_with_assign(u:UOp):
   # if size is 0, remove the contig
   if u.size == 0: return u.src[0]
@@ -131,6 +139,9 @@ pm_replace_buf = PatternMatcher([
 @track_rewrites(lambda _,ret: f"Process {pluralize('Buffer', len(ret[1]))}")
 def transform_to_call(big_sink:UOp) -> tuple[UOp, dict[UOp, UOp]]:
   if VIZ: graph_rewrite(big_sink, PatternMatcher([]), name="View Tensor Graph")
+
+  big_sink = graph_rewrite(big_sink, pm_move_contiguous_cast, name="move contiguous casts")
+
   # uop list is a list in the original_sink graph and we can map to the tags later
   # here we build buffer map
   dont_realize = {Ops.CONST, Ops.BUFFER, Ops.BIND, Ops.DEFINE_VAR, Ops.AFTER}
