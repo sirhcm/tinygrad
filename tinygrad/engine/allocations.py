@@ -69,11 +69,13 @@ def found_contiguous(ctx:dict[UOp, UOp], contig:UOp, src:UOp):
     x = x.src[0]
   ctx[src.base] = contig
 
+# CONTIGUOUS replacement hack for openpilot
+pm_create_contig_map = PatternMatcher([(UPat(Ops.CONTIGUOUS, src=(UPat(GroupOp.Movement, name="src"),), name="contig"), found_contiguous)])
+
+# replace sources with contiguous versions found above
+pm_replace_contig = PatternMatcher([(UPat((*GroupOp.ALU, Ops.CAST), name="alu"), lambda ctx,alu: alu.replace(src=new_src) if (new_src:=tuple(ctx.get(s, s) for s in alu.src)) != alu.src else None)])
+
 pm_early_transform_tensor_graph = PatternMatcher([
-  # CONTIGUOUS replacement hack for openpilot
-  (UPat(Ops.CONTIGUOUS, src=(UPat(GroupOp.Movement, name="src"),), name="contig"), found_contiguous),
-  # replace ALU sources with contiguous versions found above
-  (UPat(GroupOp.ALU, name="alu"), lambda ctx,alu: alu.replace(src=new_src) if (new_src:=tuple(ctx.get(s, s) for s in alu.src)) != alu.src else None),
   # add CONTIGUOUS to tagged UOps
   (UPat(GroupOp.All-{Ops.CONTIGUOUS, Ops.ASSIGN}, name="x"), lambda x: x.rtag(None).contiguous(tag=x.tag) if x.tag else x.replace(tag=None)),
   # remove extra CONTIGUOUS on ASSIGN (only when assign target is contiguous)
@@ -140,8 +142,10 @@ def transform_to_call(big_sink:UOp) -> tuple[UOp, dict[UOp, UOp]]:
   # this is the only one where we have to be careful to not break the tensor graph
   big_sink = graph_rewrite(big_sink, add_tags, ctx=ctx, bottom_up=True, name="number the uops")
 
+  graph_rewrite(big_sink, pm_create_contig_map, ctx=(contig_map:={}), name="create contiguous map")
+  big_sink = graph_rewrite(big_sink, pm_replace_contig, ctx=contig_map, bottom_up=True, name="replace contiguous")
   # here we can break the tensor graph. this is the only place you need to maintain numbered tags
-  big_sink = graph_rewrite(big_sink, pm_early_transform_tensor_graph, ctx={}, name="early transform tensor graph")
+  big_sink = graph_rewrite(big_sink, pm_early_transform_tensor_graph, ctx=contig_map, name="early transform tensor graph")
 
   # here we construct the final buffer_map. this is everything that will go into the tensor map
   graph_rewrite(big_sink, pm_finalize_call, ctx=ctx, name="finalize call")
