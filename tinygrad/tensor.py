@@ -2565,10 +2565,11 @@ class Tensor(OpMixin):
     return values._inverse(), indices
 
   @staticmethod
-  def _tri(r:sint, c:sint, diagonal=0, device=None, requires_grad:bool|None=None) -> Tensor:
+  def _tri(r:sint, c:sint, diagonal:int=0, device=None, requires_grad:bool|None=None) -> Tensor:
+    assert isinstance(r, int) and isinstance(c, int), f"does not support symbolic, getting {r=}, {c=}"
     return (Tensor.arange(r, device=device).unsqueeze(-1) + diagonal <= Tensor.arange(c, device=device)).requires_grad_(requires_grad)
 
-  def triu(self, diagonal:sint=0) -> Tensor:
+  def triu(self, diagonal:int=0) -> Tensor:
     """
     Returns the upper triangular part of the tensor, the other elements are set to 0.
 
@@ -2591,7 +2592,7 @@ class Tensor(OpMixin):
     """
     return Tensor._tri(self.shape[-2], self.shape[-1], diagonal=diagonal, device=self.device).where(self, self.zeros_like())
 
-  def tril(self, diagonal:sint=0) -> Tensor:
+  def tril(self, diagonal:int=0) -> Tensor:
     """
     Returns the lower triangular part of the tensor, the other elements are set to 0.
 
@@ -3283,6 +3284,9 @@ class Tensor(OpMixin):
     print(q.scaled_dot_product_attention(k, v).numpy())
     ```
     """
+    # NOTE: it also works when `key` and `value` have symbolic shape.
+    assert all_int(self.shape), f"does not support symbolic shape {self.shape}"
+
     if getenv("FLASH_ATTENTION"):
       from extra.thunder.tiny.fa import flash_attention
       return flash_attention(self, key, value, attn_mask=attn_mask, is_causal=is_causal)
@@ -3599,6 +3603,7 @@ class Tensor(OpMixin):
 
   def image_conv2d(self, weight:Tensor, bias:Tensor|None=None, groups=1, stride=1, dilation=1, padding=0, dtype=None) -> Tensor:
     base_image_type, dtsz = (dtypes.imageh, 2) if (FLOAT16:=getenv("FLOAT16", 0)) else (dtypes.imagef, 4)
+    if IMAGE == 1 and FLOAT16: self, weight, bias = self.cast(dtypes.half), weight.cast(dtypes.half), None if bias is None else bias.cast(dtypes.half)
 
     (bs,_,iy,ix), (cout,cin,H,W) = self.shape, weight.shape
     x, w = self, weight.reshape(groups, (rcout := cout//groups), cin, H, W)
@@ -3643,7 +3648,7 @@ class Tensor(OpMixin):
 
     # contiguous creates the image, and early realize static weights (TODO: test for the static weight)
     if IMAGE >= 2: x,w = x.cast(base_image_type((bs*iy, ix*groups*cin//4, 4))), w.cast(base_image_type((cout//4, H*W*cin, 4)))
-    if IMAGE == 1 and FLOAT16: x, w = x.cast(dtypes.half).contiguous().cast(dtypes.float), w.cast(dtypes.half).contiguous().cast(dtypes.float)
+    if IMAGE == 1 and FLOAT16: x, w = x.contiguous().cast(dtypes.float), w.contiguous().cast(dtypes.float)
     else: x, w = x.contiguous(), w.contiguous()
 
     if IMAGE == 1 and added_weight: w, H = w[:, :-added_weight, ...], H - added_weight
@@ -3687,7 +3692,8 @@ class Tensor(OpMixin):
 
     # NCHW output
     ret = ret.reshape(bs, oy, ox, cout).permute(0,3,1,2)
-    return ret if bias is None else ret.add(bias.reshape(1, -1, 1, 1))
+    ret = ret if bias is None else ret.add(bias.reshape(1, -1, 1, 1))
+    return ret.cast(dtypes.half) if IMAGE == 1 and FLOAT16 else ret
 
 P = ParamSpec("P")
 T = TypeVar("T")
