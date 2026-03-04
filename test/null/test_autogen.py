@@ -255,6 +255,28 @@ class TestC(unittest.TestCase):
     # Retrieve pointer from struct field and pass to C
     self.assertEqual(test(outer.inner_ptr), 52)
 
+  def test_nested_struct_pointer_kept_alive(self):
+    # Setting a pointer on a nested struct must keep the target alive.
+    from tinygrad.runtime.support.c import POINTER
+    import gc
+    @record
+    class Inner:
+      SIZE = 8
+      ptr: Annotated[POINTER[ctypes.c_int], 0]
+    @record
+    class Outer:
+      SIZE = 16
+      inner: Annotated[Inner, 0]
+      x: Annotated[ctypes.c_int, 8]
+    init_records()
+
+    outer = Outer()
+    target = (ctypes.c_int * 1)(0xDEAD)
+    outer.inner.ptr = ctypes.cast(target, POINTER[ctypes.c_int])
+    del target
+    gc.collect()
+    self.assertEqual(outer.inner.ptr[0], 0xDEAD)
+
   def test_pointer_field_loses_reference(self):
     # BUG: When a pointer is stored in a record struct field, only the address bytes are saved.
     # The pointer's _objects dict (which prevents GC of the pointed-to object) is lost.
