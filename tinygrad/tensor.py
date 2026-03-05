@@ -3631,14 +3631,16 @@ class Tensor(OpMixin):
       x, w = x.reshape(bs*iy, ix*groups*cin//4, 4), w.reshape(cout//4, H*W*cin, 4)
 
       # hacks for pitch alignment
-      x = x.pad((None, (0, xadd:=(base_image_type(x.shape).pitch // (4 * dtsz)) - x.shape[1]), None))
-      w = w.pad((None, (0, wadd:=(base_image_type(w.shape).pitch // (4 * dtsz)) - w.shape[1]), None))
+      xw = base_image_type(x.shape).pitch // (4 * dtsz)
+      x = Tensor.empty(x.shape[0], xw, 4, dtype=dtypes.half if FLOAT16 else x.dtype, device=x.device)[:, :x.shape[1], :].assign(x.cast(dtypes.half) if FLOAT16 else x)
+      ww = base_image_type(w.shape).pitch // (4 * dtsz)
+      w = Tensor.empty(w.shape[0], ww, 4, dtype=dtypes.half if FLOAT16 else w.dtype, device=w.device)[:, :w.shape[1], :].assign(w.cast(dtypes.half) if FLOAT16 else w)
 
-      if FLOAT16: x, w = x.cast(dtypes.half).contiguous().cast(dtypes.float), w.cast(dtypes.half).contiguous().cast(dtypes.float)
+      if FLOAT16: x, w = x.cast(dtypes.float), w.cast(dtypes.float)
       else: x, w = x.contiguous(), w.contiguous()
 
       # undo pitch alignment
-      x, w = x[:, :-xadd, :] if xadd else x, w[:, :-wadd, :] if wadd else w
+      x, w = x[:, :xw, :], w[:, :ww, :]
     elif IMAGE: x, w = x.cast(base_image_type((bs*iy, ix*groups*cin//4, 4))).contiguous(), w.cast(base_image_type((cout//4, H*W*cin, 4))).contiguous()
     else: x, w = x.contiguous(), w.contiguous()
 
