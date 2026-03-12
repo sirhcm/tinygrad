@@ -17,7 +17,7 @@ pm_flatten_range = PatternMatcher([
 ])
 
 def count_divmod(x:UOp) -> int: return sum(u.op in {Ops.IDIV, Ops.MOD} for u in x.backward_slice)
-def simplify_merge_adjacent(u:UOp) -> UOp|None:
+def simplify_merge_adjacent(ctx, u:UOp) -> UOp|None:
   reduce_ranges = [x.ranges for x in u.backward_slice_with_self if x.op is Ops.REDUCE]
   # on END we only want to merge adjacent ranges, on REDUCE we want to try all combinations
   for r0, r1 in (zip(u.ended_ranges, u.ended_ranges[1:]) if u.op is Ops.END else itertools.permutations(u.ended_ranges, 2)):
@@ -36,21 +36,22 @@ def simplify_merge_adjacent(u:UOp) -> UOp|None:
           u = nidx
   return u
 
-def shrink_range(gate, cond, x, i):
-  for stmt in cond.split_uop(Ops.AND):
-    if stmt.op is Ops.CMPLT and (r:=stmt.src[0]).op is Ops.RANGE and (c:=stmt.src[1]).op is Ops.CONST and r in x.backward_slice_with_self:
-      return gate.substitute({r:r.replace(src=(c,), arg=r.arg[0:-1]+(c.arg,r.arg[-1]))}).simplify()
+def mark_range_lt(ctx, idx, cond, x, i):
+  guards = {}
 
-def drop_dead_ranges(u):
-  off = range_start[u.op]
-  live = set().union(*(s.ranges for s in u.src[:off]))
-  new_rngs = tuple(r for r in u.src[off:] if r in live)
-  if len(new_rngs) != len(u.src[off:]): return u.replace(src=u.src[:off]+new_rngs)
+  for v in cond.split_uop(Ops.AND):
+    if v.op is Ops.CMPLT and (r:=v.src[0]).op is Ops.RANGE and (c:=v.src[1]).op is Ops.CONST: guards[r] = c
+
+  for r in idx.ranges:
+    if r in guards:
+      q = r.replace(src=(guards[r],))
+      ctx[r] = max(ctx[r], q, key=lambda s:s.src[0].arg) if r in ctx else q # choose the max guard
+    else: ctx.pop(r, None) # if a range is unguarded, we cannot shrink it
 
 pm_simplify_ranges = PatternMatcher([
   (UPat((Ops.END, Ops.REDUCE), name="u"), simplify_merge_adjacent),
-  (invalid_gate.named("gate"), shrink_range),
-  (UPat(Ops.END, name="u"), drop_dead_ranges),
+  (UPat(Ops.INDEX, src=(UPat(), invalid_gate,), name="idx"), mark_range_lt),
+  (UPat(Ops.SINK, name="x"), lambda ctx, x: x.substitute(ctx) if len(ctx) else None),
 ])
 
 def mark_range_mod(ctx:dict[UOp, UOp|None], r:UOp, c:UOp) -> None:
