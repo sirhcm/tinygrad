@@ -189,7 +189,7 @@ def _do_image_fixup(dt:ImageDType, idx:UOp) -> tuple[UOp, UOp, int, int]:
   h, w = dt.shape[0], dt.shape[1]
   if IMAGE == 1:
     valid_dims, factors = ImageDType.valid_dims(dt), [y.src[1].arg for y in x.split_uop(Ops.ADD) if y.op is Ops.MUL and y.src[1].op is Ops.CONST]
-    if (guess_h:=max(factors, default=4) // 4, guess_w:=h*w // guess_h) in valid_dims: h, w = guess_h, guess_w
+    if (guess_w:=max(factors, default=4) // 4, guess_h:=h*w // guess_w)[::-1] in valid_dims: h, w = guess_h, guess_w
     else:
       h, w = max(valid_dims, key=lambda hw:
                   # maximize number of valids removed
