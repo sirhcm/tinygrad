@@ -183,16 +183,15 @@ def split_load_store(ctx:Renderer|None, ls:UOp, idx:UOp):
   if len(ret) <= 1: return None
   return UOp(Ops.VCAT, ls.dtype, tuple(ret)) if ls.op is Ops.LOAD else UOp.group(*ret)
 
-def _do_image_fixup(dt:ImageDType, ls:UOp, idx:UOp) -> tuple[UOp, UOp, int, int]:
+def _do_image_fixup(dt:ImageDType, idx:UOp) -> tuple[UOp, UOp, int, int]:
   buf = idx.src[0]
   x, valid = idx.src[1].get_idx(), idx.src[1].get_valid()
   h, w = dt.shape[0], dt.shape[1]
   if IMAGE == 1:
-    if ls.op is Ops.LOAD:
-      factors = [y.src[1].arg for y in x.split_uop(Ops.ADD) if y.op is Ops.MUL and y.src[1].op is Ops.CONST]
-      w = (h*w) // (h:=max(factors) // 4)
+    valid_dims, factors = ImageDType.valid_dims(dt), [y.src[1].arg for y in x.split_uop(Ops.ADD) if y.op is Ops.MUL and y.src[1].op is Ops.CONST]
+    if (guess_h:=max(factors, default=4) // 4, guess_w:=h*w // guess_h) in valid_dims: h, w = guess_h, guess_w
     else:
-      h, w = max(ImageDType.valid_dims(dt), key=lambda hw:
+      h, w = max(valid_dims, key=lambda hw:
                   # maximize number of valids removed
                  (len(_drop_valid_stmts(valid, idx:=uop_given_valid(valid, UOp.vectorize((x//4)%hw[1], x//(4*hw[1]))), *hw)),
                   # and minimize idx complexity (number of nodes)
@@ -205,13 +204,13 @@ def image_fixup(ls:UOp):
   # normal image load or store, with the CAST from expand_index
   if ls.src[0].op is Ops.CAST and isinstance(image_dtype:=ls.src[0].src[0].dtype, ImageDType):
     assert ls.src[0].dtype.count == 4, "image must be casted to 4"
-    _, idx, _, _ = _do_image_fixup(image_dtype, ls, ls.src[0].src[0])
+    _, idx, _, _ = _do_image_fixup(image_dtype, ls.src[0].src[0])
     return ls.replace(src=(idx,)+ls.src[1:])
 
   # this is an unprocessed image without a cast, aka unfoldable image load. this doesn't work for stores
   if isinstance(image_dtype:=ls.src[0].dtype, ImageDType) and ls.src[0].src[1].get_idx().dtype != dtypes.index.vec(2):
     assert ls.op is Ops.LOAD, "if an image store isn't upcasted to 4, we can't store it"
-    x, idx, width, height = _do_image_fixup(image_dtype, ls, ls.src[0])
+    x, idx, width, height = _do_image_fixup(image_dtype, ls.src[0])
     vec_load = ls.replace(dtype=ls.dtype.vec(4), src=(idx,)+ls.src[1:])
     # image pixels have 4 channels (.xyzw), select channel based on x % 4
     x_mod_4 = x % 4
