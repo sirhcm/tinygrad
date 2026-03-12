@@ -1,6 +1,6 @@
 import itertools
 from tinygrad.uop.ops import UOp, PatternMatcher, UPat, Ops, graph_rewrite, _substitute, range_start
-from tinygrad.uop.symbolic import symbolic
+from tinygrad.uop.symbolic import symbolic, invalid_gate
 from tinygrad.helpers import partition
 from tinygrad.dtype import dtypes, ImageDType
 
@@ -36,8 +36,21 @@ def simplify_merge_adjacent(u:UOp) -> UOp|None:
           u = nidx
   return u
 
+def shrink_range(gate, cond, x, i):
+  for stmt in cond.split_uop(Ops.AND):
+    if stmt.op is Ops.CMPLT and (r:=stmt.src[0]).op is Ops.RANGE and (c:=stmt.src[1]).op is Ops.CONST and r in x.backward_slice_with_self:
+      return gate.substitute({r:r.replace(src=(c,), arg=r.arg[0:-1]+(c.arg,r.arg[-1]))}).simplify()
+
+def drop_dead_ranges(u):
+  off = range_start[u.op]
+  live = set().union(*(s.ranges for s in u.src[:off]))
+  new_rngs = tuple(r for r in u.src[off:] if r in live)
+  if len(new_rngs) != len(u.src[off:]): return u.replace(src=u.src[:off]+new_rngs)
+
 pm_simplify_ranges = PatternMatcher([
   (UPat((Ops.END, Ops.REDUCE), name="u"), simplify_merge_adjacent),
+  (invalid_gate.named("gate"), shrink_range),
+  (UPat(Ops.END, name="u"), drop_dead_ranges),
 ])
 
 def mark_range_mod(ctx:dict[UOp, UOp|None], r:UOp, c:UOp) -> None:
