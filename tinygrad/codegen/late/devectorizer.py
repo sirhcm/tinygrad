@@ -369,3 +369,23 @@ pm_add_loads = PatternMatcher([
   (UPat(Ops.STORE, src=(UPat(Ops.LOAD), UPat(name="val")), name="s"), lambda s,val: s.replace(src=(s.src[0].src[0], val))),
 ])
 
+# make images
+
+def make_image(pa, idx):
+  if not isinstance(dt:=pa.dtype, ImageDType) and (shapes:=ImageDType.valid_dims(dt)):
+    imgdt = dtypes.imageh if dt.base == dtypes.half else dtypes.imagef
+    ret = idx.substitute({pa:pa.replace(dtype=imgdt(shapes[0] + (4,), shapes[0][1] * 4 * dt.itemsize))})
+    if (vec:=ret.src[0]).op is Ops.VECTORIZE: ret = ret.replace(src=(vec.replace(dtype=vec.src[0].dtype.vec(vec.dtype.v)), *ret.src[1:]))
+    return ret.replace(dtype=ret.src[0].dtype)
+
+pm_make_images = PatternMatcher([
+  (UPat.any(pa:=UPat(Ops.PARAM, name="pa"), UPat(Ops.VECTORIZE, src=pa)).index(UPat(), name="idx").load(),
+   lambda pa,idx: img.load(dtype=dtypes.float.vec(idx.dtype.v)) if (img:=make_image(pa, idx)) is not None else None),
+  (UPat(Ops.VECTORIZE, src=UPat(Ops.PARAM, name="pa")).index(UPat(), name="idx").store(UPat.var("v")),
+   lambda pa,idx,v: img.store(v.src[0] if v.op is Ops.CAST and v.dtype.scalar() is dtypes.half else v.cast(dtypes.float.vec(v.dtype.count)))
+    if v.dtype.count % 4 == 0 and (img:=make_image(pa, idx)) is not None else None),
+  # remove double cast from image loads / stores
+  (UPat(Ops.WHERE, src=(UPat.var("a"), UPat.var("b").f(Ops.CAST), UPat.var("c"))), lambda a,b,c: a.where(b, c.cast(b.dtype)).cast(c.dtype)),
+  (UPat(Ops.INDEX, src=(UPat(Ops.PARAM, name="pa"),), allow_any_len=True, name="idx").cast(dtypes.half).cast(dtypes.float), lambda idx,pa:
+   idx if isinstance(pa.dtype, ImageDType) else None),
+])
