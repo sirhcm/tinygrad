@@ -72,7 +72,10 @@ def expand_index(buf:UOp, vec:UOp):
         best_drop, cands = dropped, [(ch, cw, cidx)]
       elif dropped == best_drop: cands.append((ch, cw, cidx))
     # and tiebreak with indexing complexity (ie. number of nodes)
-    h, w, _ = cands[0] if len(cands) == 1 else min(cands, key=lambda cand: len(cand[2].gep(1).simplify().backward_slice))
+    if len(cands) == 1: h, w, _ = cands[0]
+    else:
+      sink = UOp.sink(*(i.gep(1) for _, _, i in cands)).simplify()
+      h, w, _ = cands[min(range(len(cands)), key=lambda i: sink.src[i].backward_slice)]
     buf = buf.replace(dtype=(dtypes.imageh if dt.itemsize == 2 else dtypes.imagef)((h, w, 4), w * 4 * dt.itemsize))
   if getenv("UNSAFE_DISABLE_MASK", 0): vec = vec.get_idx()
   # generate the individual indexes
