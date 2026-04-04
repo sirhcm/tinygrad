@@ -14,7 +14,7 @@ class TestC(unittest.TestCase):
 
   def test_packed_struct(self):
     @record
-    class Baz:
+    class Baz(c.Struct):
       SIZE = 8
       a: Annotated[ctypes.c_uint, 0, 30]
       b: Annotated[ctypes.c_uint, 3, 30, 6]
@@ -36,7 +36,7 @@ class TestC(unittest.TestCase):
 
   def test_packed_struct_interop(self):
     @record
-    class Baz:
+    class Baz(c.Struct):
       SIZE = 8
       a: Annotated[ctypes.c_int, 0, 30]
       b: Annotated[ctypes.c_int, 3, 30, 6]
@@ -65,7 +65,7 @@ class TestC(unittest.TestCase):
   # https://github.com/python/cpython/issues/90914
   def test_bitfield_interop(self):
     @record
-    class Baz:
+    class Baz(c.Struct):
       SIZE = 1
       a: Annotated[ctypes.c_bool, 0, 1, 0]
       b: Annotated[ctypes.c_bool, 0, 1, 1]
@@ -92,7 +92,7 @@ class TestC(unittest.TestCase):
 
   def test_struct_interop(self):
     @record
-    class Baz:
+    class Baz(c.Struct):
       SIZE = 32
       a: Annotated[ctypes.c_int, 0]
       b: Annotated[ctypes.c_int, 4]
@@ -119,7 +119,7 @@ class TestC(unittest.TestCase):
 
   def test_aos_interop(self):
     @record
-    class Item:
+    class Item(c.Struct):
       SIZE = 4
       val: Annotated[ctypes.c_int, 0]
     init_records()
@@ -133,14 +133,14 @@ class TestC(unittest.TestCase):
     """
     dll = self.compile(src)
     @dll.bind
-    def test(arr:(Item * 3)) -> ctypes.c_int: ...
-    self.assertEqual(test((Item * 3)(Item(10), Item(20), Item(30))), 60)
+    def test(arr:c.Array[Item, 3]) -> ctypes.c_int: ...
+    self.assertEqual(test(c.Array[Item, 3](Item(10), Item(20), Item(30))), 60)
 
   def test_soa_interop(self):
     @record
-    class Row:
+    class Row(c.Struct):
       SIZE = 16
-      data: Annotated[ctypes.c_int * 3, 0]
+      data: Annotated[c.Array[ctypes.c_int, 3], 0]
     init_records()
     src = """
       struct row { int data[3]; };
@@ -151,7 +151,7 @@ class TestC(unittest.TestCase):
     dll = self.compile(src)
     @dll.bind
     def test(x:Row) -> Row: ...
-    r = test(Row((ctypes.c_int * 3)(10, 20, 30)))
+    r = test(Row(c.Array[ctypes.c_int, 3](10, 20, 30)))
     self.assertIsInstance(r, Row)
     self.assertEqual(r.data[0], 30)
     self.assertEqual(r.data[1], 20)
@@ -159,7 +159,7 @@ class TestC(unittest.TestCase):
 
   def test_soa_ptr_interop(self):
     @record
-    class Row:
+    class Row(c.Struct):
       SIZE = 8
       data: Annotated[c.POINTER[ctypes.c_int], 0]
     init_records()
@@ -172,15 +172,15 @@ class TestC(unittest.TestCase):
     dll = self.compile(src)
     @dll.bind
     def test(x:Row) -> ctypes.c_int: ...
-    assert test(Row((ctypes.c_int * 3)(10, 20, 30))) == 60
+    assert test(Row(c.Array[ctypes.c_int, 3](10, 20, 30))) == 60
 
   def test_nested_struct_interop(self):
     @record
-    class Inner:
+    class Inner(c.Struct):
       SIZE = 4
       a: Annotated[ctypes.c_int, 0]
     @record
-    class Outer:
+    class Outer(c.Struct):
       SIZE = 8
       inner: Annotated[Inner, 0]
       b: Annotated[ctypes.c_int, 4]
@@ -201,7 +201,7 @@ class TestC(unittest.TestCase):
 
   def test_struct_pointer_interop(self):
     @record
-    class Foo:
+    class Foo(c.Struct):
       SIZE = 8
       a: Annotated[ctypes.c_int, 0]
       b: Annotated[ctypes.c_int, 4]
@@ -217,8 +217,8 @@ class TestC(unittest.TestCase):
     """
     dll = self.compile(src)
     @dll.bind
-    def test(f:ctypes.POINTER(Foo)) -> ctypes.POINTER(Foo): ...
-    inp = ctypes.pointer(Foo(10, 20))
+    def test(f:c.POINTER[Foo]) -> c.POINTER[Foo]: ...
+    inp = c.pointer(Foo(10, 20))
     out = test(inp)
     self.assertEqual(out.contents.a, 20)
     self.assertEqual(out.contents.b, 10)
@@ -228,12 +228,12 @@ class TestC(unittest.TestCase):
     # Mimics how mesa.struct_lp_build_tgsi_params.mask is used
     from tinygrad.runtime.support.c import POINTER
     @record
-    class Inner:
+    class Inner(c.Struct):
       SIZE = 8
       value: Annotated[ctypes.c_int, 0]
       flag: Annotated[ctypes.c_int, 4]
     @record
-    class Outer:
+    class Outer(c.Struct):
       SIZE = 16
       x: Annotated[ctypes.c_int, 0]
       inner_ptr: Annotated[POINTER[Inner], 8]
@@ -251,7 +251,7 @@ class TestC(unittest.TestCase):
     def test(p:POINTER[Inner]) -> ctypes.c_int: ...
 
     inner = Inner(value=42, flag=10)
-    outer = Outer(x=1, inner_ptr=ctypes.pointer(inner))
+    outer = Outer(x=1, inner_ptr=c.pointer(inner))
     # Retrieve pointer from struct field and pass to C
     self.assertEqual(test(outer.inner_ptr), 52)
 
@@ -261,13 +261,13 @@ class TestC(unittest.TestCase):
     # This causes the pointed-to object to be garbage collected, leading to use-after-free.
     from tinygrad.runtime.support.c import POINTER
     @record
-    class MaskContext:
+    class MaskContext(c.Struct):
       SIZE = 16
       value: Annotated[ctypes.c_int, 0]
       initialized: Annotated[ctypes.c_int, 4]
       ptr: Annotated[ctypes.c_void_p, 8]
     @record
-    class Params:
+    class Params(c.Struct):
       SIZE = 16
       x: Annotated[ctypes.c_int, 0]
       mask: Annotated[POINTER[MaskContext], 8]
@@ -286,7 +286,7 @@ class TestC(unittest.TestCase):
 
     # When MaskContext() is created inline, it gets garbage collected after the pointer
     # is stored because only the address bytes are saved, not the _objects reference.
-    params = Params(x=1, mask=ctypes.pointer(MaskContext()))
+    params = Params(x=1, mask=c.pointer(MaskContext()))
     mask_begin(params.mask, 42)
     result = mask_end(params.mask)
     self.assertEqual(result, 43)  # 42 + 1
