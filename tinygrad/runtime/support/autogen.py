@@ -1,19 +1,20 @@
 import ctypes, itertools, re, functools, os, keyword
 from tinygrad.helpers import unwrap
+from tinygrad.runtime.support import c
 import tinygrad.runtime.autogen.libclang as clang # use REGEN=1 to regenerate libclang bindings
 
-def unwrap_cursor(c: clang.CXCursor) -> clang.CXCursor:
-  assert c != clang.clang_getNullCursor()
-  return c
+def unwrap_cursor(cxc: clang.CXCursor) -> clang.CXCursor:
+  assert cxc != clang.clang_getNullCursor()
+  return cxc
 
-def children(c: clang.CXCursor) -> list[clang.CXCursor]:
+def children(cxc: clang.CXCursor) -> list[clang.CXCursor]:
   ret = []
   @clang.CXCursorVisitor
   def visitor(child, _0, _1):
     nonlocal ret
     ret.append(child)
     return clang.CXChildVisit_Continue
-  clang.clang_visitChildren(c, visitor, None)
+  clang.clang_visitChildren(cxc, visitor, None)
   return ret
 
 def fields(t: clang.CXType) -> list[clang.CXCursor]:
@@ -33,14 +34,14 @@ def all_fields(t, off=0):
       yield from all_fields(clang.clang_getCursorType(f), off + clang.clang_Cursor_getOffsetOfField(f) // 8)
     elif nm(f): yield f, off+clang.clang_Cursor_getOffsetOfField(f) // 8 # ignores unnamed fields
 
-def arguments(c: clang.CXCursor|clang.CXType):
-  yield from ((clang.clang_Cursor_getArgument if isinstance(c, clang.CXCursor) else clang.clang_getArgType)(c, i)
-              for i in range(clang.clang_Cursor_getNumArguments(c) if isinstance(c, clang.CXCursor) else clang.clang_getNumArgTypes(c)))
+def arguments(cx: clang.CXCursor|clang.CXType):
+  yield from ((clang.clang_Cursor_getArgument if isinstance(cx, clang.CXCursor) else clang.clang_getArgType)(cx, i)
+              for i in range(clang.clang_Cursor_getNumArguments(cx) if isinstance(cx, clang.CXCursor) else clang.clang_getNumArgTypes(cx)))
 
 class Tokens:
-  def __init__(self, c: clang.CXCursor):
-    clang.clang_tokenize(tu:=clang.clang_Cursor_getTranslationUnit(c), clang.clang_getCursorExtent(c),
-                         toks:=(ctypes.POINTER(clang.CXToken)()), cnt:=ctypes.c_uint32())
+  def __init__(self, cxc: clang.CXCursor):
+    clang.clang_tokenize(tu:=clang.clang_Cursor_getTranslationUnit(cxc), clang.clang_getCursorExtent(cxc),
+                         toks:=(c.POINTER[clang.CXToken]()), cnt:=ctypes.c_uint32())
     self.tu, self.toks = tu, toks[:cnt.value]
     for t in self.toks: t._tu = tu
 
@@ -60,9 +61,9 @@ def cxs(fn):
   return wrap
 
 # TODO: caching this would be nice?
-nm = cxs(lambda c: getattr(clang, f"clang_get{c.__class__.__name__[2:]}Spelling")(*([c._tu, c] if isinstance(c, clang.CXToken) else [c])))
-def extent(c): return getattr(clang, f"clang_get{c.__class__.__name__[2:]}Extent")(*([c._tu, c] if isinstance(c, clang.CXToken) else [c]))
-def loc(c): return getattr(clang, f"clang_get{c.__class__.__name__[2:]}Location")(*([c._tu, c] if isinstance(c, clang.CXToken) else [c]))
+nm = cxs(lambda cx: getattr(clang, f"clang_get{cx.__class__.__name__[2:]}Spelling")(*([cx._tu, cx] if hasattr(cx, "_tu") else [cx])))
+def extent(cx): return getattr(clang, f"clang_get{cx.__class__.__name__[2:]}Extent")(*([cx._tu, cx] if hasattr(cx, "_tu") else [cx]))
+def loc(cx): return getattr(clang, f"clang_get{cx.__class__.__name__[2:]}Location")(*([cx._tu, cx] if hasattr(cx, "_tu") else [cx]))
 def gel(loc: clang.CXSourceLocation):
   clang.clang_getExpansionLocation(loc, file:=clang.CXFile(), line:=ctypes.c_uint32(), None, offset:=ctypes.c_uint32())
   return {"file":clang.clang_getFileName(file), "line":line.value, "offset":offset.value}
