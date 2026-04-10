@@ -94,10 +94,10 @@ def normalize(a): return ("_" + n if keyword.iskeyword(n:=nm(a)) else n)
 def an(py, dt): return f"Annotated[{py}, ctypes.c_{dt}]"
 
 def gen(name, dll, files, args=[], prolog=[], rules=[], epilog=[], recsym=False, errno=False, anon_names={}, types={}, parse_macros=True, paths=[]):
-  macros, lines, anoncnt, types, objc, fns = [], [], itertools.count().__next__, {k:(v,True) for k,v in types.items()}, False, set()
+  macros, lines, anoncnt, types, objc, fns, fwd_scopes = [], [], itertools.count().__next__, {k:(v,True) for k,v in types.items()}, False, set(), {}
   def tname(t, suggested_name=None, typedef=None) -> str:
     suggested_name = anon_names.get(f"{loc_file(loc(decl:=clang.clang_getTypeDeclaration(t)))}:{loc_line(loc(decl))}", suggested_name)
-    nonlocal lines, types, anoncnt, objc
+    nonlocal lines, types, anoncnt, objc, fwd_scopes
     tmap = {clang.CXType_Void:"None",clang.CXType_Char_U:an("int","ubyte"),clang.CXType_UChar:an("int","ubyte"),clang.CXType_WChar:an("str","wchar"),
             clang.CXType_Char_S:an("bytes","char"),clang.CXType_SChar:an("int","byte"),clang.CXType_Bool:an("bool","bool"),
             **{getattr(clang, f'CXType_{k}'):an("float", k.lower()) for k in ["Float", "Double", "LongDouble"]},
@@ -125,20 +125,21 @@ def gen(name, dll, files, args=[], prolog=[], rules=[], epilog=[], recsym=False,
         # libclang does not use CXType_Elaborated for function parameters with type qualifiers (eg. void (*)(const struct foo))
         if (_nm:=re.sub(r"^const ", "", nm(t))) in types and types[_nm][1]: return types[_nm][0]
         # check for forward declaration
-        if _nm in types: types[_nm] = (tnm:=types[_nm][0]), len(fields(t)) != 0, (ln:=types[_nm][2])
+        if _nm in types: types[_nm], scope = ((tnm:=types[_nm][0]), len(fields(t)) != 0, (ln:=types[_nm][2])), fwd_scopes[tnm]
         else:
           real_nm = ((suggested_name or (f"_anon{'struct' if decl.kind==clang.CXCursor_StructDecl else 'union'}{anoncnt()}"))
                      if clang.clang_Cursor_isAnonymous(decl) else _nm)
-          types[_nm] = (tnm:=real_nm.replace(' ', '_').replace('::', '_')), len(fields(t)) != 0, (ln:=len(lines))
+          types[_nm], scope = ((tnm:=real_nm.replace(' ', '_').replace('::', '_')), len(fields(t)) != 0, (ln:=len(lines))), types.keys()
           lines.append(f"class {tnm}(c.Struct): SIZE = 0")
           if typedef:
             lines.append(f"{typedef.replace('::', '_')}: TypeAlias = {tnm}")
             types[typedef] = typedef.replace('::', '_'), True
-        ff=[(f, tname(clang.clang_getCursorType(f), f"{tnm}_{nm(f)}"), offset) +
+        ff=[(f, ((lambda x:x) if nm(f) in scope else repr)(tname(clang.clang_getCursorType(f), f"{tnm}_{nm(f)}")), offset) +
             ((clang.clang_getFieldDeclBitWidth(f), clang.clang_Cursor_getOffsetOfField(f) % 8) *clang.clang_Cursor_isBitField(f))
             for f,offset in all_fields(t)]
         if ff: lines[ln] = '\n'.join(["@c.record", f"class {tnm}(c.Struct):", f"  SIZE = {clang.clang_Type_getSizeOf(t)}",
                                       *[f"  {normalize(f)}: Annotated[{', '.join(str(a) for a in args)}]" for f,*args in ff]])
+        else: fwd_scopes[tnm] = types.keys() # this was a forward declaration
         return tnm
       case clang.CXType_Enum:
         # TODO: C++ and GNU C have forward declared enums
@@ -255,7 +256,7 @@ def gen(name, dll, files, args=[], prolog=[], rules=[], epilog=[], recsym=False,
         lines, types = rollback
     clang.clang_disposeTranslationUnit(tu)
     clang.clang_disposeIndex(idx)
-  main = '\n'.join(['# mypy: disable-error-code="empty-body"', "from __future__ import annotations", "import ctypes",
+  main = '\n'.join(['# mypy: disable-error-code="empty-body"', "import ctypes",
                     "from typing import Annotated, Literal, TypeAlias", "from tinygrad.runtime.support.c import _IO, _IOW, _IOR, _IOWR",
                     "from tinygrad.runtime.support import c", *prolog, *(["from tinygrad.runtime.support import objc"]*objc),
                     *([f"dll = c.DLL('{name}', {dll}{f', {paths}'*bool(paths)}{', use_errno=True'*errno})"] if dll else []), *lines,
