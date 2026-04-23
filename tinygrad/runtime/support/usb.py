@@ -41,7 +41,7 @@ class USB3:
     if libusb.libusb_claim_interface(self.handle, 0): raise RuntimeError("claim_interface failed. sudo required?")
 
     if use_bot:
-      libusb.libusb_set_interface_alt_setting(self.handle, 0, 0)
+      for ep in [self.ep_data_out, self.ep_data_in]: libusb.libusb_clear_halt(self.handle, ep)
       self._tag = 0
     else:
       if libusb.libusb_set_interface_alt_setting(self.handle, 0, 1): raise RuntimeError("alt_setting failed")
