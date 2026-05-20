@@ -5,8 +5,7 @@ from typing import Any, Generic, TypeVar, Iterator, Generator, TYPE_CHECKING
 import importlib, inspect, functools, pathlib, os, platform, contextlib, sys, re, atexit, pickle, decimal
 from tinygrad.helpers import BENCHMARKS, CI, OSX, LRU, getenv, diskcache_get, diskcache_put, DEBUG, GlobalCounters, flat_mv, PROFILE, temp, colored
 from tinygrad.helpers import Context, CCACHE, ALLOW_DEVICE_USAGE, MAX_BUFFER_SIZE, cpu_events, ProfileEvent, ProfilePointEvent, suppress_finalizing
-from tinygrad.helpers import select_by_name, select_first_inited, DEV, EMULATED_DTYPES, IMAGE, FLOAT16, TracingKey, size_to_str, Target
-from tinygrad.helpers import pluralize
+from tinygrad.helpers import select_by_name, select_first_inited, DEV, EMULATED_DTYPES, IMAGE, FLOAT16, TracingKey, size_to_str, Target, pluralize
 from tinygrad.dtype import DType, PtrDType, dtypes, _to_np_dtype
 if TYPE_CHECKING: from tinygrad.renderer import Renderer
 
@@ -25,12 +24,12 @@ class _Device:
     ix = self.canonicalize(ix)
     assert ALLOW_DEVICE_USAGE or ix.split(":")[0] in ["DISK", "TINYFS", "NPY", "PYTHON"], f"usage of device {ix} disallowed"
     return self.__get_canonicalized_item(ix)
+  def _get_cls(self, nm:str) -> type[Compiled]:
+    base = (__package__ or __name__).split('.')[0]  # tinygrad
+    return next(cls for cname, cls in inspect.getmembers(importlib.import_module(f'{base}.runtime.ops_{nm}')) if cname.lower() == nm + 'device')
   @functools.cache  # this class is a singleton, pylint: disable=method-cache-max-size-none
   def __get_canonicalized_item(self, ix:str) -> Compiled:
-    base = (__package__ or __name__).split('.')[0]  # tinygrad
-    x = ix.split(":")[0].lower()
-    ret = [cls for cname, cls in inspect.getmembers(importlib.import_module(f'{base}.runtime.ops_{x}')) \
-           if (cname.lower() == x + "device")][0](ix)
+    ret = self._get_cls(ix.split(":")[0].lower())(ix)
     if DEBUG >= 1: print(f"opened device {ix} from pid:{os.getpid()}")
     self._opened_devices.add(ix)
     return ret
@@ -391,29 +390,35 @@ if PROFILE:
     launch_viz("PROFILE", fn)
 
 def enumerate_devices_str() -> Generator[str, None, None]:
-  from tinygrad import Tensor, Device
+  import subprocess
+
+  def run(code, devstr):
+    args = [sys.executable, '-c', f"""from tinygrad import Tensor, Device
+try:
+  assert (Tensor([1,2,3]) * 2).tolist() == [2,4,6]
+  {code}
+except Exception as e: print(e); exit(-1)"""]
+    p = subprocess.run(args, env={**os.environ, 'CACHELEVEL': '0', 'DEV':devstr}, capture_output=True)
+    return (success:=p.returncode==0), next(iter(p.stdout.decode().splitlines()[::-1]), "")
 
   for device in ALL_DEVICES:
-    ren_results, iface_results = [], []
-    try:
-      d = Device[device]
-      for iface in [i for i in getattr(d, 'ifaces', []) if not i.__name__.startswith("MOCK")]:
-        try:
-          name = iface.__name__[:-5]
-          default_text, count = ("(default)", d.count()) if type(d.iface) is iface else (f"(DEV={name}+{device} to make default)", iface(d, 0).count) # type: ignore
-          iface_results.append(f"{colored('+', 'green')} {name}: {pluralize('device', count)} {default_text}")
-        except Exception as e: iface_results.append(f"{colored('-', 'red')} {iface.__name__[:-5]}: {e}")
-      for r in d.renderers:
-        try:
-          with Context(CACHELEVEL=0, DEV=f"{device}:{d._renderer_name(r)}"): test = (Tensor([1,2,3], device=device) * 2).tolist()
-          if test != [2,4,6]: raise ValueError(f"got {test} instead of [2, 4, 6]")
-          default_text = '(default)' if type(d.renderer) is r else f'(DEV={device}:{d._renderer_name(r)} to make default)'
-          ren_results.append(f"{colored('+', 'green')} {d._renderer_name(r)} {default_text}")
-        except Exception as e: ren_results.append(f"{colored('-', 'red')} {d._renderer_name(r)}: {e}")
+    dcls, ren_results, iface_results, fst_iface = Device._get_cls(device.lower()), [], [], None
+    for iface in [i.__name__[:-5] for i in getattr(dcls, 'ifaces', [])]:
+      success, out = run(f"print(Device[Device.DEFAULT].count())", f"{iface}+{device}")
+      if success:
+        default, fst_iface = f"(DEV={iface}+{device} to make default)" if fst_iface or iface.startswith("MOCK") else "(default)", iface
+        iface_results.append(f"{colored('+', 'green')} {iface}: {pluralize('device', int(out))} {default}")
+      else: iface_results.append(f"{colored('-', 'red')} {iface}: {out}")
+    devprefix = f"{fst_iface}+{device}" if fst_iface else device
+    success, out = run(f"d = Device[Device.DEFAULT]; print(' '.join([d._renderer_name(r) for r in d.renderers]))", devprefix)
+    if success:
+      for r in out.split():
+        success, out = run("", f"{devprefix}:{r}")
+        if success: ren_results.append(f"{colored('+', 'green')} {r} (DEV={device}:{r} to make default) {out}")
+        else: ren_results.append(f"{colored('-', 'red')} {r}: {out}")
       result = (colored('PASS', 'green') + ("\n"+" "*12+"interfaces:\n" if iface_results else "") + '\n'.join([" "*13+x for x in iface_results]) +
                 (("\n"+" "*12+"renderers:\n") + '\n'.join([" "*13+x for x in ren_results]) if len(ren_results) > 1 else ""))
-    except Exception as e: result = f"{colored('FAIL', 'red')} {e}"
+    else: result = f"{colored('FAIL', 'red')} {out}"
     yield f"{'*' if device == Device.DEFAULT else ' '} {device:8s}: {result}"
-
 if __name__ == "__main__":
   for s in enumerate_devices_str(): print(s)
