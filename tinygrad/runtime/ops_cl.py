@@ -89,6 +89,9 @@ class CLAllocator(LRUAllocator['CLDevice']):
   def _copyout(self, dest:memoryview, src:cl.cl_mem):
     check(cl.clEnqueueReadBuffer(self.dev.queue, src, False, 0, len(dest)*dest.itemsize, from_mv(dest), 0, None, None))
     self.dev.synchronize()
+  def _offset(self, buf:cl.cl_mem, size:int, offset:int) -> cl.cl_mem:
+    region = cl.cl_buffer_region(offset, size)
+    return checked(cl.clCreateSubBuffer(buf, cl.CL_MEM_READ_WRITE, cl.CL_BUFFER_CREATE_TYPE_REGION, ctypes.pointer(region), status := ctypes.c_int32()), status)
 
 class CLDevice(Compiled):
   device_ids = None                 # this is global and only initted once
