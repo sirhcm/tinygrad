@@ -5,7 +5,7 @@ from tinygrad.dtype import dtypes, AddrSpace
 from tinygrad.uop.ops import PatternMatcher, UPat, Ops, UOp, resolve, GroupOp, graph_rewrite, sint, AxisType, profile_matches, broadcast_axes
 from tinygrad.uop.ops import gate_kernel_sink
 from tinygrad.uop.symbolic import symbolic, pm_simplify_valid, pm_drop_and_clauses
-from tinygrad.helpers import argsort, all_same, cpu_profile, PCONTIG, colored, Context, SPEC
+from tinygrad.helpers import argsort, all_same, cpu_profile, PCONTIG, colored, Context, SPEC, OPENPILOT_HACKS
 
 ALWAYS_CONTIGUOUS: set[Ops] = {Ops.CONTIGUOUS, Ops.AFTER, Ops.BUFFER, Ops.SLICE,
                       Ops.CONST, Ops.BIND, Ops.MSELECT, Ops.MSTACK, Ops.PARAM,
@@ -32,6 +32,8 @@ pm_generate_realize_map = PatternMatcher([
   (UPat((Ops.MSELECT, Ops.MSTACK), name="rb"), realize_srcs),
   # sometimes we need to realize the src of STORE if there's a self-access
   (UPat(Ops.STORE, src=(UPat.var("dest"), UPat.var("src"))), realize_store_after_src),
+  # hack
+  (UPat(Ops.PAD, name="p"), lambda ctx,p: realize(ctx, s) if (s:=p.src[0]).op_in_backward_slice_with_self(Ops.REDUCE) and OPENPILOT_HACKS else None),
 ])
 
 @dataclass(frozen=True)
