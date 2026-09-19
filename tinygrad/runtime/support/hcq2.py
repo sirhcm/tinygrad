@@ -37,7 +37,7 @@ def all_devices_in(d:Any, c:frozenset[str]) -> bool: return {x.split(":")[0] for
 
 def get_enqueue_devs(call:UOp) -> Any|None:
   if call.op is not Ops.CALL: return None # entries can be AFTER-wrapped calls
-  if call.body.op not in (Ops.PROGRAM, Ops.COPY) and not (call.body.op is Ops.CUSTOM_FUNCTION and call.body.arg == "present"): return None
+  if call.body.op not in (Ops.PROGRAM, Ops.COPY): return None
   if not (bufs:=get_call_arg_uops(call)): return None
   if call.body.op is Ops.COPY: bufs = bufs[::-1] # copies push from the src device: p2p writes are faster than reads
   devs = min(bufs, key=lambda b: not all_devices_in(b.device, HCQ_DEVS)).device
@@ -312,7 +312,6 @@ class HWQueue:
   q_rewrite = PatternMatcher([
     # rewrites from calls
     (UPat(Ops.CALL, src=(UPat(Ops.PROGRAM, name="prg"),), name="call", allow_any_len=True), lambda ctx, call, prg: ctx.exec(call, prg)),
-    (UPat(Ops.CALL, src=(UPat(Ops.CUSTOM_FUNCTION, arg="present"),), name="call", allow_any_len=True), lambda ctx, call: ctx.present(call)),
     (UPat(Ops.CALL, src=(UPat(Ops.COPY), UPat(name="dst"), UPat(name="src")), allow_any_len=True),
      lambda ctx, dst, src: ctx.copy(dst, src, src.max_numel() * src.dtype.itemsize)),
 
@@ -358,7 +357,6 @@ class HWQueue:
     self.blob += self.blob[start:] * int(r.vmax)
 
   def memory_barrier(self): pass # a copy queue has nothing to flush
-  def present(self, call:UOp): raise NotImplementedError(f"{self.dev.device} queue does not support present")
   def submit(self, cmdbuf:UOp) -> UOp: raise NotImplementedError("queues need a submit")
 
 # *****************

@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import cast, Iterator, Any, Sequence
 import weakref, decimal, array
 from dataclasses import dataclass, replace, field
-from tinygrad.helpers import colored, DEBUG, GlobalCounters, ansipad, prod, flatten, Context, to_tuple, tqdm, dedup, panic
+from tinygrad.helpers import colored, DEBUG, GlobalCounters, ansipad, prod, flatten, Context, to_tuple, tqdm, dedup
 from tinygrad.helpers import BEAM, size_to_str, time_to_str, VALIDATE_WITH_CPU, PROFILE, ProfilePointEvent, cpu_events, perf_counter_us, cpu_profile
 from tinygrad.uop.ops import Ops, PatternMatcher, UOp, UPat, AxisType, sym_infer, graph_rewrite, ProgramInfo
 from tinygrad.device import Device, Buffer, MultiBuffer, ProfileGraphEntry
@@ -22,7 +22,6 @@ def get_call_outs_ins(call:UOp) -> tuple[tuple[int, ...], tuple[int, ...]]:
   if isinstance(call.arg.aux, HCQInfo): return (), ()
   if ast.op is Ops.PROGRAM: return tuple(ast.arg.outs), tuple(ast.arg.ins)
   if ast.op is Ops.COPY: return (0,), (1,)
-  if ast.op is Ops.CUSTOM_FUNCTION and ast.arg == "present": return (), (0,)
   if ast.op is Ops.CUSTOM_FUNCTION and ast.arg == "encdec": return (0,), tuple(range(1, len(get_call_arg_uops(call))))
   return (), ()
 
@@ -47,7 +46,6 @@ def get_call_name(call:UOp, bufs:Sequence[Buffer|UOp], var_vals:dict[str, int]|N
 
   ast, arg_uops = call.body, get_call_arg_uops(call)
   if ast.op is Ops.PROGRAM: return ast.src[0].arg.name
-  if ast.op is Ops.CUSTOM_FUNCTION and ast.arg == "present": return colored(f"present {_dev_str(bufs[0])}", "yellow")
   if ast.op is Ops.COPY: return colored(f"copy {_uop_sz_to_str(arg_uops[0]):>10}, {_dev_str(bufs[0]):>7s} <- {_dev_str(bufs[1]):7s}", "yellow")
   if ast.op is Ops.CUSTOM_FUNCTION and ast.arg == "encdec": return colored(f"enc/dec {_uop_sz_to_str(arg_uops[0])}", "yellow")
   if ast.op is Ops.CUSTOM_FUNCTION and ast.arg == "graph": return colored(f"batched {len(ast.src[0].src)}", "cyan")
@@ -278,8 +276,6 @@ def lower_and_compile(linear:UOp) -> UOp:
                            name="precompile kernels")
 
 pm_exec = PatternMatcher([
-  (UPat(Ops.CALL, src=(UPat(Ops.CUSTOM_FUNCTION, arg="present"),), allow_any_len=True),
-   lambda: panic(NotImplementedError, "present requires HCQ2 and a configured display backend")),
   (UPat(Ops.CALL, src=(UPat(Ops.COPY, name="ast"),), name="call", allow_any_len=True), exec_copy),
   (UPat(Ops.CALL, src=(UPat(Ops.PROGRAM, name="ast"),), name="call", allow_any_len=True),
    lambda ctx, call, ast: exec_hcq(ctx, call, ast) if isinstance(call.arg.aux, HCQInfo) else exec_kernel(ctx, call, ast)),

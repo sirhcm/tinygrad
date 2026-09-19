@@ -5,10 +5,13 @@ This deliberately supports only the experiment's 720p mode, without scaling, GPU
 import time
 from tinygrad.device import Buffer, BufferSpec
 from tinygrad.dtype import dtypes
+from tinygrad.uop.ops import Ops, UOp
 from tinygrad.runtime.ops_amd import AMDDevice
 from extra.amd_display.hdmi import HDMI
 from extra.amd_display.dmub import wait_for
 from extra.amd_display.bios import AtomBIOS
+
+FRAMEBUFFER_OFFSET = 0x1000
 
 class Scanout:
   def __init__(self, dev:AMDDevice, hdmi:HDMI, bios:AtomBIOS):
@@ -19,10 +22,17 @@ class Scanout:
     if self.refclock != 100_000_000: raise RuntimeError("Scanout deadlines currently require a 100 MHz reference clock")
     # cpu_access requests physically contiguous VRAM from the PCI allocator. The same allocation
     # has a compute virtual address and a physical memory-controller address for display.
-    self.buffers = [Buffer(dev.device, self.mode.width * self.mode.height, dtypes.uint32,
-      options=BufferSpec(cpu_access=True, nolru=True), preallocate=True) for _ in range(2)]
-    self.addresses = [self.adev.paddr2mc(b.meta.mapping.paddrs[0][0]) for b in self.buffers]
-    if any(len(b.meta.mapping.paddrs) != 1 for b in self.buffers): raise RuntimeError("Scanout requires contiguous VRAM")
+    # One application allocation: stop word at byte 0, uint64 frame count at 8,
+    # space for future input/state, then two page-aligned framebuffers.
+    pixels = self.mode.width * self.mode.height
+    self.memory = Buffer(dev.device, FRAMEBUFFER_OFFSET + pixels * 8, dtypes.uint8,
+      options=BufferSpec(cpu_access=True, uncached=True, nolru=True), preallocate=True)
+    self.memory.host[:FRAMEBUFFER_OFFSET] = bytes(FRAMEBUFFER_OFFSET)
+    self.stop = self.memory.view(1, dtypes.uint32, 0).ensure_allocated()
+    self.counter = self.memory.view(1, dtypes.uint64, 8).ensure_allocated()
+    self.buffers = [self.memory.view(pixels, dtypes.uint32, FRAMEBUFFER_OFFSET + i * pixels * 4).ensure_allocated() for i in range(2)]
+    if len(self.memory.meta.mapping.paddrs) != 1: raise RuntimeError("Scanout requires contiguous VRAM")
+    self.addresses = [self.adev.paddr2mc(self.memory.meta.mapping.paddrs[0][0] + b.offset) for b in self.buffers]
 
   def enable(self):
     m, u = self.mode, self.hdmi.update
@@ -77,7 +87,10 @@ class Scanout:
     u("MPCC0_MPCC_UPDATE_LOCK_SEL", mpcc_update_lock_sel=0)
     u("MPCC0_MPCC_CONTROL", mpcc_mode=1, mpcc_alpha_blnd_mode=2, mpcc_global_alpha=255, mpcc_global_gain=255)
     u("MPC_OUT0_MUX", mpc_out_mux=0)
-    self.flip(1)  # the first animation kernel writes buffer 0
+    # Start on buffer 1; the animation first renders into buffer 0.
+    u("HUBPREQ0_DCSURF_FLIP_CONTROL", surface_flip_type=0)
+    u("HUBPREQ0_DCSURF_PRIMARY_SURFACE_ADDRESS_HIGH", primary_surface_address_high=self.addresses[1] >> 32)
+    u("HUBPREQ0_DCSURF_PRIMARY_SURFACE_ADDRESS", primary_surface_address=self.addresses[1] & 0xffffffff)
     u("DPG0_DPG_CONTROL", dpg_en=0)
     u("HUBP0_DCHUBP_CNTL", hubp_blank_en=0, hubp_ttu_disable=0, hubp_underflow_clear=1)
     time.sleep(0.05)  # discard startup underflow, then leave detection enabled throughout the animation
@@ -108,21 +121,31 @@ class Scanout:
     u("HUBPREQ0_DCN_SURF0_TTU_CNTL1", refcyc_per_req_delivery_pre=int(line * 1024 / (m.width * 4 / 256)))
     u("HUBPREQ0_DCN_GLOBAL_TTU_CNTL", min_ttu_vblank=1000, qos_level_flip=15)
 
-  def flip(self, index:int):
-    addr, u = self.addresses[index], self.hdmi.update
-    u("HUBPREQ0_DCSURF_FLIP_CONTROL", surface_flip_type=0)
-    u("HUBPREQ0_DCSURF_PRIMARY_SURFACE_ADDRESS_HIGH", primary_surface_address_high=addr >> 32)
-    u("HUBPREQ0_DCSURF_PRIMARY_SURFACE_ADDRESS", primary_surface_address=addr & 0xffffffff)
-
   def status(self) -> dict[str, int]:
     hubp = self.reg("HUBP0_DCHUBP_CNTL").read_bitfields()
     return {"underflow": hubp["hubp_underflow_status"], "timeout": hubp["hubp_timeout_status"],
       "segment_error": hubp["hubp_seg_alloc_err_status"], "vm_fault": self.reg("DCN_VM_FAULT_STATUS").read(),
       "fifo_error": self.reg(f"{self.hdmi.fe}_DIG_FIFO_CTRL0").read_bitfields()["dig_fifo_error"]}
 
+  def flip_commands(self, index:int) -> tuple[UOp, ...]:
+    """Latch a completed buffer at vblank, then wait until the previous buffer is free."""
+    def wait(name:str, value:int, mask:int=0xffffffff):
+      return UOp(Ops.INS, arg=("wait_reg", dtypes.void), src=tuple(UOp.const(v, dtypes.uint32) for v in (self.reg(name).addr[0], value, mask)))
+    def write(name:str, value:int):
+      return UOp(Ops.INS, arg=("write_reg", dtypes.void), src=tuple(UOp.const(v, dtypes.uint32) for v in (self.reg(name).addr[0], value)))
+    address = self.addresses[index]
+    blank = self.reg("OTG0_OTG_STATUS").fields_mask("otg_v_blank")
+    return (UOp(Ops.INS, arg=("flush", dtypes.void)), wait("OTG0_OTG_STATUS", 0, blank),
+      write("HUBPREQ0_DCSURF_PRIMARY_SURFACE_ADDRESS_HIGH", address >> 32),
+      write("HUBPREQ0_DCSURF_PRIMARY_SURFACE_ADDRESS", address & 0xffffffff),
+      wait("OTG0_OTG_STATUS", blank, blank),
+      wait("HUBPREQ0_DCSURF_FLIP_CONTROL", 0, self.reg("HUBPREQ0_DCSURF_FLIP_CONTROL").fields_mask("surface_flip_pending")),
+      wait("HUBPREQ0_DCSURF_SURFACE_EARLIEST_INUSE_HIGH", address >> 32, 0xffff),
+      wait("HUBPREQ0_DCSURF_SURFACE_EARLIEST_INUSE", address & 0xffffffff), wait("OTG0_OTG_STATUS", 0, blank))
+
   def close(self):
-    self.dev.synchronize()  # queued presentation waits need a running timing generator and scanout pipe
+    self.dev.synchronize()  # queued refresh waits need the timing generator running
     self.hdmi.update("HUBP0_DCHUBP_CNTL", hubp_blank_en=1)
     wait_for(lambda: self.reg("HUBP0_DCHUBP_CNTL").read_bitfields()["hubp_no_outstanding_req"], 1, description="scanout drain")
-    for buf in self.buffers:
+    for buf in (*self.buffers, self.counter, self.stop, self.memory):
       if buf.is_allocated(): buf.deallocate()

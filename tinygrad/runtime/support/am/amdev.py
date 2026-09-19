@@ -244,13 +244,13 @@ class AMDev:
       ip.init_hw()
       if DEBUG >= 2: print(f"am {self.devfmt}: {ip.__class__.__name__} initialized")
 
-  def fini(self):
+  def fini(self, lower_clocks:bool=True):
     if DEBUG >= 2: print(f"am {self.devfmt}: Finalizing")
     # a VF may only touch the engines inside an access window, take one so the host does not have to FLR the VF later
     if self.is_vf and not self.vf_access:
       with contextlib.suppress(TimeoutError): self.vf_access = self._vf_mailbox_request(am.IDH_REQ_GPU_FINI_ACCESS)
     for ip in [self.sdma, self.gfx]: ip.fini_hw()
-    if not self.is_vf: self.smu.set_clocks(level=0)
+    if not self.is_vf and lower_clocks: self.smu.set_clocks(level=0)
     self.ih.interrupt_handler()
     if not self.is_vf: self.reg("regSCRATCH_REG6").write(self.is_err_state) # set finalized state.
     if self.vf_access: self.release_vf_access()

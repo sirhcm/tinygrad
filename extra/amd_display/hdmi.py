@@ -20,17 +20,17 @@ class HDMI:
     self.dmub, self.reg, self.connector, self.mode = dmub, dmub.reg, connector, Mode()
     self.frontend = connector.transmitter
     self.fe = f"DIG{self.frontend}"
-    self.saved:dict[str, int] = {}
+    self.programmed:set[str] = set()
     self.phy_enabled = False
     if any(self.reg(f"OTG{i}_OTG_CONTROL").read_bitfields()["otg_master_en"] for i in range(4)):
       raise RuntimeError("A display pipe is already active")
 
   def update(self, name:str, **fields):
-    if name not in self.saved: self.saved[name] = self.reg(name).read()
+    self.programmed.add(name)
     self.reg(name).update(**fields)
 
   def write(self, name:str, value:int):
-    if name not in self.saved: self.saved[name] = self.reg(name).read()
+    self.programmed.add(name)
     self.reg(name).write(value)
 
   def transmitter(self, action:int):
@@ -126,18 +126,13 @@ class HDMI:
   def close(self):
     # Stop the consumer before removing its clock: disabling the PHY first strands OTG mid-frame
     # and can stall later SMU display-clock commands.
-    if f"{self.fe}_DIG_FIFO_CTRL0" in self.saved: self.reg(f"{self.fe}_DIG_FIFO_CTRL0").update(dig_fifo_enable=0)
-    if "OTG0_OTG_CONTROL" in self.saved:
+    if f"{self.fe}_DIG_FIFO_CTRL0" in self.programmed: self.reg(f"{self.fe}_DIG_FIFO_CTRL0").update(dig_fifo_enable=0)
+    if "OTG0_OTG_CONTROL" in self.programmed:
       self.reg("OTG0_OTG_CONTROL").update(otg_master_en=0)
       wait_for(lambda: self.reg("OTG0_OTG_CONTROL").read_bitfields()["otg_current_master_en_state"], 0,
                description="timing generator stop")
-    if "OTG_PIXEL_RATE_DIV" in self.saved:
-      original_divider = self.reg("OTG_PIXEL_RATE_DIV").decode(self.saved["OTG_PIXEL_RATE_DIV"])["otg0_tmds_pixel_rate_div"]
-      self.set_tmds_divider(original_divider)
     if self.phy_enabled:
       self.transmitter(0)
       self.phy_enabled = False
-    for name, value in reversed(self.saved.copy().items()):
-      if name == "OTG_PIXEL_RATE_DIV": continue
-      if self.reg(name).read() != value: self.reg(name).write(value)
-    self.saved.clear()
+    # Keep display clocks and power configured; restoring idle defaults can strand the memory fabric.
+    self.programmed.clear()

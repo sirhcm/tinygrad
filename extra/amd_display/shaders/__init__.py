@@ -8,7 +8,7 @@ from tinygrad.codegen.opt import Opt, OptOps
 
 def render_kernel(width:int, height:int, device:str, shader:str="fractal") -> UOp:
   pixels = UOp.param(0, dtypes.uint32, width * height, device=device)
-  time = UOp.param(1, dtypes.uint32, 1, device=device).index(0).load().cast(dtypes.float32) / 60.0
+  time = UOp.param(1, dtypes.uint64, 1, device=device).index(0).load().cast(dtypes.float32) / 60.0
   pixel = UOp.range(width * height, 0)
   # Shadertoy uses pixel centers and a bottom-left origin; scanout rows start at the top.
   x, y = (pixel % width).cast(dtypes.float32) + 0.5, height - 0.5 - (pixel // width).cast(dtypes.float32)
