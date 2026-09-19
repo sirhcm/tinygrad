@@ -19,7 +19,8 @@ class Scheduler:
     self.ast, self.ren = ast, ren
     self.applied_opts = list(self.ast.arg.applied_opts) if self.ast.arg is not None else []
     self.tensor_core:TensorCore|None = None
-    self.opt_range = count(start=max([x.arg[0] for x in self.rngs], default=0)+1)
+    # Loop headers are not optimization axes, but still reserve their range IDs.
+    self.opt_range = count(start=max([x.arg[0] for x in self.ast.backward_slice if x.op is Ops.RANGE], default=0)+1)
 
   @property
   def rngs(self):

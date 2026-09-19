@@ -187,7 +187,8 @@ class CustomASM24Controller:
     if not data: return
     assert len(data) % 4 == 0, f"pcie_mem_write requires 4-byte aligned size, got {len(data)}"
     self._f0_out(0x60, 0x0F, address, len(data) // 4, mode=1)
-    self.usb.bulk_write(data)
+    # The bridge emits PCIe writes through PIO: allow at least 1 MiB/s for large VRAM uploads.
+    self.usb.bulk_write(data, timeout=1000 + ceildiv(len(data) * 1000, 1 << 20))
 
   def pcie_mem_read(self, address:int, nbytes:int) -> memoryview:
     """Streaming PCIe memory read via 0xF0 mode 2 + bulk IN. Returns little-endian bytes."""
